@@ -164,6 +164,21 @@ def _apply_additive_migrations(conn: sqlite3.Connection) -> None:
         """CREATE UNIQUE INDEX IF NOT EXISTS uq_one_open_cycle_per_teacher
            ON coaching_cycles(teacher_id) WHERE closed_at IS NULL"""
     )
+
+    # Partial-unique indexes on teachers matching what bulk_create_teacher's
+    # dedupe checks. The app-level check-then-insert is safe from concurrent
+    # bulk uploads collapsing into duplicate rows only if the storage catches
+    # the race — a partial index on non-null values is what makes that hold.
+    # NULL email / employee_id are allowed to repeat (they're legitimately
+    # missing on some rows).
+    conn.execute(
+        """CREATE UNIQUE INDEX IF NOT EXISTS uq_teachers_org_email
+           ON teachers(org_id, email) WHERE email IS NOT NULL"""
+    )
+    conn.execute(
+        """CREATE UNIQUE INDEX IF NOT EXISTS uq_teachers_org_employee_id
+           ON teachers(org_id, employee_id) WHERE employee_id IS NOT NULL"""
+    )
     conn.commit()
 
 
@@ -265,17 +280,30 @@ def bulk_create_teacher(
     teacher; caller catches and reports it as a per-row error rather than
     surfacing it to end users.
     """
-    match = None
+    # Run BOTH lookups (not short-circuit on email) so a cross-match — where
+    # the email lands on one existing teacher but the employee_id lands on a
+    # different one — surfaces as an error the caller can report per-row.
+    # Silently returning either match would coalesce two distinct people
+    # under the row's payload.
+    by_email = None
     if email:
-        match = conn.execute(
+        by_email = conn.execute(
             "SELECT id, archived_at FROM teachers WHERE org_id = ? AND email = ?",
             (org_id, email),
         ).fetchone()
-    if not match and employee_id:
-        match = conn.execute(
+    by_empid = None
+    if employee_id:
+        by_empid = conn.execute(
             "SELECT id, archived_at FROM teachers WHERE org_id = ? AND employee_id = ?",
             (org_id, employee_id),
         ).fetchone()
+    if by_email and by_empid and by_email["id"] != by_empid["id"]:
+        raise ValueError(
+            f"CSV row is ambiguous: email {email!r} matches an existing teacher, "
+            f"but employee_id {employee_id!r} matches a different one. "
+            f"Fix the row so both keys point at the same person, or leave one blank."
+        )
+    match = by_email or by_empid
     if match and match["archived_at"]:
         raise ArchivedTeacherError(
             f"A teacher matching this row exists but is archived. "

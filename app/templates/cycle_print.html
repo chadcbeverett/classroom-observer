@@ -229,20 +229,29 @@
 </head>
 <body>
 
+{# Vocabulary aligned with cycle_detail.html / detail.html — so a coach who
+   goes screen → Cmd+P doesn't get two different words for the same status.
+   The one legitimate print-only difference is the pending pill (interactive
+   says 'still to read'; print says 'not yet read' — 'still' implies an
+   ongoing promise that doesn't fit a closed-cycle document). #}
 {% set _impl_labels_print = {
   'full': 'landed full',
   'partial': 'landed partial',
-  'not_observed': "didn't see it land",
+  'not_observed': "didn't see it",
   'regressed': 'went the other way',
 } %}
 {% set _goal_status_labels_print = {
-  'proposed': 'proposed', 'active': 'in play',
+  'proposed': 'waiting', 'active': 'in play',
   'closed_met': 'met', 'closed_partial': 'partial',
   'closed_unmet': 'unmet', 'abandoned': 'set aside',
 } %}
+{# Safe first name — guards against an empty/whitespace-only teacher.name
+   (schema allows NOT NULL empty string). Falls back to 'the teacher' rather
+   than crashing the print report on `[].[0]`. #}
+{% set _first = (teacher.name or '').strip().split()[0] if (teacher.name or '').strip() else 'the teacher' %}
 {% set _proposed_by_labels = {
   'coach': 'the coach',
-  'teacher': teacher.name.split()[0],
+  'teacher': _first,
   'joint': 'both together',
 } %}
 
@@ -295,7 +304,7 @@
 {% if cycle.growth_story %}
 <h2>The story of this cycle</h2>
 <div class="growth-story-box">{{ cycle.growth_story }}</div>
-<div class="growth-attribution">— Written by the coach; what changed for {{ teacher.name.split()[0] }} over the arc</div>
+<div class="growth-attribution">— Written by the coach; what changed for {{ _first }} over the arc</div>
 {% endif %}
 
 {# ---- Goals ---- #}
@@ -311,7 +320,7 @@
       {% if g.description %}<p>{{ g.description }}</p>{% endif %}
       {% if g.releasing %}
       <div class="goal-releasing">
-        <div class="goal-releasing-label">What {{ teacher.name.split()[0] }} was setting aside</div>
+        <div class="goal-releasing-label">What {{ _first }} was setting aside</div>
         <div>{{ g.releasing }}</div>
       </div>
       {% endif %}
@@ -357,7 +366,7 @@
   <p class="muted small">{{ a.related_domain }} · named {{ a.created_at | warmdate }}</p>
   <p>{{ a.bite_sized_action_text }}</p>
   {% if a.evidence_notes %}<p class="muted small"><em>What the coach saw:</em> {{ a.evidence_notes }}</p>{% endif %}
-  {% if a.teacher_account %}<p class="muted small"><em>{{ teacher.name.split()[0] }}'s account:</em> {{ a.teacher_account }}</p>{% endif %}
+  {% if a.teacher_account %}<p class="muted small"><em>{{ _first }}'s account:</em> {{ a.teacher_account }}</p>{% endif %}
 </div>
 {% endfor %}
 {% else %}
@@ -426,7 +435,7 @@
     Coach signature &amp; date
   </div>
   <div class="sig-line">
-    {{ teacher.name.split()[0] }}'s signature &amp; date
+    {{ _first }}'s signature &amp; date
   </div>
 </div>
 

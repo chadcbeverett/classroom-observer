@@ -175,8 +175,10 @@ def _fmt_warm_date(value) -> str:
 
 def _fmt_warm_datetime(value) -> str:
     """Warm form for a moment — "Sep 12 at 5:42 pm". Falls back to date-only
-    if the input is date-only. Tolerates several input shapes because some
-    callers pre-format via ``_fmt_ts`` (space-separated) and some pass raw ISO.
+    ("Sep 12") when the input is date-only, so callers don't get a misleading
+    "Sep 12 at 12:00 am" from a date that never had a time on it. Tolerates
+    several input shapes because some callers pre-format via ``_fmt_ts``
+    (space-separated) and some pass raw ISO.
     """
     if not value:
         return ""
@@ -184,6 +186,10 @@ def _fmt_warm_datetime(value) -> str:
     s = str(value).strip()
     if s in ("", "—"):
         return s
+    # Date-only shortcut: if the string doesn't carry a time component,
+    # render the warm-date form rather than fabricating a midnight timestamp.
+    if len(s) <= 10 and "T" not in s and " " not in s:
+        return _fmt_warm_date(value)
     # Try to parse a range of shapes: ISO with T/Z, space-separated compact,
     # date-only. Fall through to warm-date if nothing sticks.
     dt = None
@@ -3014,7 +3020,12 @@ def _split_csv_list(raw: Optional[str]) -> Optional[list]:
 @app.get("/admin/users/upload", response_class=HTMLResponse)
 def users_upload_page(request: Request) -> HTMLResponse:
     """Show the CSV-upload form + result table (empty on GET)."""
-    _deny_teacher(_current_viewer(request), "User upload")
+    # Coach-only — bulk-inserting users into the org has the same blast radius
+    # as any other write-to-users route in this app, and no existing route lets
+    # principal or district viewers write. `_require_coach` matches the rest
+    # of the write-path pattern; using `_deny_teacher` here (the earlier draft)
+    # let principal/district POST rosters, which they shouldn't.
+    _require_coach(_current_viewer(request), "User upload")
     return TEMPLATES.TemplateResponse("users_upload.html", {
         "request": request,
         "results": None,
@@ -3031,18 +3042,41 @@ async def users_upload_submit(
     report. Single-pass — earlier coach rows must appear before the teacher
     rows that reference them via ``assigned_coach_email``.
     """
-    _deny_teacher(_current_viewer(request), "User upload")
+    # Coach-only — bulk-inserting users into the org has the same blast radius
+    # as any other write-to-users route in this app, and no existing route lets
+    # principal or district viewers write. `_require_coach` matches the rest
+    # of the write-path pattern; using `_deny_teacher` here (the earlier draft)
+    # let principal/district POST rosters, which they shouldn't.
+    _require_coach(_current_viewer(request), "User upload")
     import csv
     import io
 
-    raw = await csv_file.read()
+    # Cap the upload so a 500MB file (accidental or malicious) can't OOM the
+    # worker. 4MB is generous for a roster CSV — a district of 10k teachers
+    # at ~200 bytes/row is 2MB.
+    MAX_UPLOAD_BYTES = 4 * 1024 * 1024
+    raw = await csv_file.read(MAX_UPLOAD_BYTES + 1)
+    if len(raw) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            413,
+            f"CSV is larger than {MAX_UPLOAD_BYTES // (1024*1024)}MB. "
+            f"Split it into batches and re-upload.",
+        )
     # UTF-8 with BOM handling (Excel exports) → fall back to Latin-1 so a
     # malformed encoding still parses instead of 500ing on the admin.
     try:
         text = raw.decode("utf-8-sig")
     except UnicodeDecodeError:
         text = raw.decode("latin-1", errors="replace")
+    # Normalize header names — Excel / Sheets exports often produce headers
+    # like ``Name`` or ``Email `` (trailing space from a Sheets column). Strip
+    # and lowercase so the row.get() calls below match consistently regardless
+    # of how the CSV was authored. csv.DictReader's ``fieldnames`` is
+    # mutable, so we override it after construction rather than rebuilding
+    # the CSV text.
     reader = csv.DictReader(io.StringIO(text))
+    if reader.fieldnames:
+        reader.fieldnames = [(h or "").strip().lower() for h in reader.fieldnames]
 
     results = []
     conn = db_connect(DB_PATH)
@@ -3050,9 +3084,11 @@ async def users_upload_submit(
         org_id = _SEEDED_IDS["org_id"]
         # Pre-fetch coach email → user_id lookup so teacher rows can attach.
         # Refreshed after each successful coach insert so a CSV with coaches
-        # and their teachers in the same file still works.
+        # and their teachers in the same file still works. Keys are lowercased
+        # so an assigned_coach_email of ``Alex@District.org`` still matches an
+        # existing coach stored as ``alex@district.org``.
         coach_lookup = {
-            r["email"]: r["id"]
+            (r["email"] or "").lower(): r["id"]
             for r in conn.execute(
                 "SELECT id, email FROM users WHERE org_id = ? AND role = 'coach' AND is_active = 1",
                 (org_id,),
@@ -3088,7 +3124,8 @@ async def users_upload_submit(
                 if role == "teacher":
                     coach_user_id = None
                     if assigned_coach_email:
-                        coach_user_id = coach_lookup.get(assigned_coach_email)
+                        # Case-insensitive lookup — see coach_lookup construction.
+                        coach_user_id = coach_lookup.get(assigned_coach_email.lower())
                         if not coach_user_id:
                             entry["status"] = "error"
                             entry["note"] = (
@@ -3114,6 +3151,25 @@ async def users_upload_submit(
                         results.append(entry)
                         continue
                     db_role = _CSV_ROLE_TO_DB_ROLE[role]
+                    # Check for an existing user first so we can refuse a
+                    # role-conflict — otherwise `get_or_create_user` would
+                    # silently return the existing user id regardless of role,
+                    # and a later teacher row referencing this email would
+                    # attach its `assigned_coach_user_id` to what the DB knows
+                    # as an admin, not a coach.
+                    existing = conn.execute(
+                        "SELECT id, role FROM users WHERE org_id = ? AND email = ?",
+                        (org_id, email),
+                    ).fetchone()
+                    if existing and existing["role"] != db_role:
+                        entry["status"] = "error"
+                        entry["note"] = (
+                            f"a user with email {email!r} already exists as "
+                            f"role={existing['role']!r}; refusing to reuse them "
+                            f"as role={role!r}"
+                        )
+                        results.append(entry)
+                        continue
                     uid = get_or_create_user(
                         conn, org_id=org_id, email=email, name=name, role=db_role,
                     )
@@ -3122,7 +3178,7 @@ async def users_upload_submit(
                     if role == "coach":
                         # Refresh the lookup so later teacher rows in this batch
                         # can reference the coach we just added.
-                        coach_lookup[email] = uid
+                        coach_lookup[email.lower()] = uid
                     if role != "coach":
                         entry["note"] = (
                             f"role {role!r} stored as 'admin' at the storage layer "
@@ -3130,6 +3186,12 @@ async def users_upload_submit(
                         )
 
             except ArchivedTeacherError as e:
+                entry["status"] = "error"
+                entry["note"] = str(e)
+            except ValueError as e:
+                # Cross-match ambiguity in bulk_create_teacher, and any other
+                # validation failure that surfaces as a plain ValueError from
+                # helpers below. Surface the message directly.
                 entry["status"] = "error"
                 entry["note"] = str(e)
             except sqlite3.IntegrityError as e:
