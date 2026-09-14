@@ -139,9 +139,9 @@
   {% endif %}
 
   <form method="post" action="/actions/{{ current_action.id }}/teacher-account" class="tv-response-slot">
-    <label for="teacher-account-{{ current_action.id }}">How do <em>you</em> see it?</label>
+    <label for="teacher-account-{{ current_action.id }}">Tell your coach how the practice is going, from your side</label>
     <textarea id="teacher-account-{{ current_action.id }}" name="teacher_account" rows="3"
-              placeholder="Your own account of trying this. What worked, what got in the way, what surprised you.">{{ current_action.teacher_account or '' }}</textarea>
+              placeholder="What's working, what's getting in the way, what you're noticing. Your coach will read this before your next visit.">{{ current_action.teacher_account or '' }}</textarea>
     <button type="submit">Save it</button>
     {% if current_action.teacher_account_at %}
       <div class="muted small">Last saved {{ current_action.teacher_account_at | warmdatetime }}.</div>

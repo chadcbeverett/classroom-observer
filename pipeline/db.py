@@ -245,6 +245,62 @@ def get_or_create_teacher(
     return teacher_id
 
 
+def bulk_create_teacher(
+    conn: sqlite3.Connection,
+    *,
+    org_id: str,
+    name: str,
+    email: Optional[str] = None,
+    employee_id: Optional[str] = None,
+    assigned_coach_user_id: Optional[str] = None,
+    grade_levels: Optional[list] = None,
+    subjects: Optional[list] = None,
+) -> tuple[str, bool]:
+    """Bulk-import a teacher. Idempotent on ``(org_id, email)`` and
+    ``(org_id, employee_id)``. Returns ``(teacher_id, was_created)`` — when
+    a match is found the existing row is left in place (create-only; we don't
+    silently overwrite coach-authored profile data on a re-upload).
+
+    Raises :class:`ArchivedTeacherError` when the match is on an archived
+    teacher; caller catches and reports it as a per-row error rather than
+    surfacing it to end users.
+    """
+    match = None
+    if email:
+        match = conn.execute(
+            "SELECT id, archived_at FROM teachers WHERE org_id = ? AND email = ?",
+            (org_id, email),
+        ).fetchone()
+    if not match and employee_id:
+        match = conn.execute(
+            "SELECT id, archived_at FROM teachers WHERE org_id = ? AND employee_id = ?",
+            (org_id, employee_id),
+        ).fetchone()
+    if match and match["archived_at"]:
+        raise ArchivedTeacherError(
+            f"A teacher matching this row exists but is archived. "
+            f"Restore that record or use a different email / employee id."
+        )
+    if match:
+        return match["id"], False
+
+    teacher_id = _new_id()
+    conn.execute(
+        """INSERT INTO teachers
+               (id, org_id, name, email, employee_id, assigned_coach_user_id,
+                grade_levels, subjects, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            teacher_id, org_id, name, email, employee_id, assigned_coach_user_id,
+            json.dumps(grade_levels) if grade_levels else None,
+            json.dumps(subjects) if subjects else None,
+            _now_iso(),
+        ),
+    )
+    conn.commit()
+    return teacher_id, True
+
+
 def get_or_create_rubric_from_id(
     conn: sqlite3.Connection, *, org_id: Optional[str], rubric_id_kind: str
 ) -> str:

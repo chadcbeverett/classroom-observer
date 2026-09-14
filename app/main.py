@@ -56,6 +56,7 @@ from pipeline.db import (
     list_coach_move_history, most_recent_published_move_for_teacher,
     carry_forward_goal, set_action_goal, list_actions_for_goal,
     add_practice_log_entry, list_practice_log_for_teacher,
+    bulk_create_teacher, ArchivedTeacherError,
 )
 from pipeline.gbf import STEPS as GBF_STEPS, STEPS_BY_ID as GBF_STEPS_BY_ID, all_steps_by_phase
 from pipeline.rubric import DEFAULT_RUBRIC_ID, RUBRICS, get_rubric
@@ -2951,6 +2952,192 @@ async def district_context_save(request: Request) -> RedirectResponse:
     finally:
         conn.close()
     return RedirectResponse(url=f"/admin/district-context?year={academic_year}", status_code=303)
+
+
+# ---------------------------------------------------------------------------
+# Bulk user upload — roster import via CSV
+# ---------------------------------------------------------------------------
+#
+# CSV columns (header row required):
+#   name                    — display name (required)
+#   email                   — required for coach/principal/district; optional for teachers
+#   role                    — teacher | coach | principal | district
+#   employee_id             — optional; district's unique id
+#   assigned_coach_email    — teachers only; coach must already exist or be earlier in the CSV
+#   grade_levels            — teachers only; comma-separated inside a quoted cell ("6,7,8")
+#   subjects                — teachers only; comma-separated inside a quoted cell ("Math,Science")
+#
+# Coach-facing only. Idempotent: re-uploading the same CSV skips existing rows
+# rather than overwriting profile fields. Archived matches error the row (the
+# admin must restore or use a different id).
+
+
+_CSV_ROLE_TO_DB_ROLE = {
+    # Users table CHECK constraint only allows admin/coach/teacher_self_serve/viewer,
+    # so principal and district land as 'admin' at the DB layer. The cookie-based
+    # viewer system reads roles separately, so this doesn't affect access.
+    "coach": "coach",
+    "principal": "admin",
+    "district": "admin",
+}
+
+
+def _split_csv_list(raw: Optional[str]) -> Optional[list]:
+    """Split a comma-separated cell into a list, stripping whitespace and
+    dropping empties. Returns None if nothing survives.
+    """
+    if not raw:
+        return None
+    parts = [p.strip() for p in raw.split(",") if p and p.strip()]
+    return parts or None
+
+
+@app.get("/admin/users/upload", response_class=HTMLResponse)
+def users_upload_page(request: Request) -> HTMLResponse:
+    """Show the CSV-upload form + result table (empty on GET)."""
+    _deny_teacher(_current_viewer(request), "User upload")
+    return TEMPLATES.TemplateResponse("users_upload.html", {
+        "request": request,
+        "results": None,
+        "totals": None,
+    })
+
+
+@app.post("/admin/users/upload", response_class=HTMLResponse)
+async def users_upload_submit(
+    request: Request,
+    csv_file: UploadFile = File(...),
+) -> HTMLResponse:
+    """Parse the uploaded CSV, insert each row, and render a per-row status
+    report. Single-pass — earlier coach rows must appear before the teacher
+    rows that reference them via ``assigned_coach_email``.
+    """
+    _deny_teacher(_current_viewer(request), "User upload")
+    import csv
+    import io
+
+    raw = await csv_file.read()
+    # UTF-8 with BOM handling (Excel exports) → fall back to Latin-1 so a
+    # malformed encoding still parses instead of 500ing on the admin.
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = raw.decode("latin-1", errors="replace")
+    reader = csv.DictReader(io.StringIO(text))
+
+    results = []
+    conn = db_connect(DB_PATH)
+    try:
+        org_id = _SEEDED_IDS["org_id"]
+        # Pre-fetch coach email → user_id lookup so teacher rows can attach.
+        # Refreshed after each successful coach insert so a CSV with coaches
+        # and their teachers in the same file still works.
+        coach_lookup = {
+            r["email"]: r["id"]
+            for r in conn.execute(
+                "SELECT id, email FROM users WHERE org_id = ? AND role = 'coach' AND is_active = 1",
+                (org_id,),
+            ).fetchall()
+        }
+
+        for lineno, row in enumerate(reader, start=2):  # header is line 1
+            name = (row.get("name") or "").strip()
+            email = (row.get("email") or "").strip() or None
+            role = (row.get("role") or "").strip().lower()
+            employee_id = (row.get("employee_id") or "").strip() or None
+            assigned_coach_email = (row.get("assigned_coach_email") or "").strip() or None
+            grade_levels = _split_csv_list(row.get("grade_levels"))
+            subjects = _split_csv_list(row.get("subjects"))
+
+            entry = {
+                "line": lineno, "name": name, "email": email, "role": role,
+                "status": None, "note": "",
+            }
+
+            if not name:
+                entry["status"] = "error"
+                entry["note"] = "'name' column is required"
+                results.append(entry)
+                continue
+            if role not in ("teacher", "coach", "principal", "district"):
+                entry["status"] = "error"
+                entry["note"] = f"unknown role: {role!r} (expected teacher / coach / principal / district)"
+                results.append(entry)
+                continue
+
+            try:
+                if role == "teacher":
+                    coach_user_id = None
+                    if assigned_coach_email:
+                        coach_user_id = coach_lookup.get(assigned_coach_email)
+                        if not coach_user_id:
+                            entry["status"] = "error"
+                            entry["note"] = (
+                                f"assigned_coach_email {assigned_coach_email!r} not found among active coaches "
+                                f"(list the coach earlier in the CSV, or add them first)"
+                            )
+                            results.append(entry)
+                            continue
+                    tid, was_created = bulk_create_teacher(
+                        conn, org_id=org_id, name=name,
+                        email=email, employee_id=employee_id,
+                        assigned_coach_user_id=coach_user_id,
+                        grade_levels=grade_levels, subjects=subjects,
+                    )
+                    entry["status"] = "created" if was_created else "already on file"
+                    entry["id"] = tid
+
+                else:
+                    # coach / principal / district → users table
+                    if not email:
+                        entry["status"] = "error"
+                        entry["note"] = f"'email' column is required for role={role!r}"
+                        results.append(entry)
+                        continue
+                    db_role = _CSV_ROLE_TO_DB_ROLE[role]
+                    uid = get_or_create_user(
+                        conn, org_id=org_id, email=email, name=name, role=db_role,
+                    )
+                    entry["status"] = "ok"
+                    entry["id"] = uid
+                    if role == "coach":
+                        # Refresh the lookup so later teacher rows in this batch
+                        # can reference the coach we just added.
+                        coach_lookup[email] = uid
+                    if role != "coach":
+                        entry["note"] = (
+                            f"role {role!r} stored as 'admin' at the storage layer "
+                            f"(principal/district are cookie-side roles in this build)"
+                        )
+
+            except ArchivedTeacherError as e:
+                entry["status"] = "error"
+                entry["note"] = str(e)
+            except sqlite3.IntegrityError as e:
+                entry["status"] = "error"
+                entry["note"] = f"integrity error: {e}"
+            except Exception as e:  # pragma: no cover — defensive
+                entry["status"] = "error"
+                entry["note"] = f"{type(e).__name__}: {e}"
+
+            results.append(entry)
+
+    finally:
+        conn.close()
+
+    totals = {
+        "created": sum(1 for r in results if r["status"] == "created"),
+        "ok": sum(1 for r in results if r["status"] == "ok"),
+        "already_on_file": sum(1 for r in results if r["status"] == "already on file"),
+        "errors": sum(1 for r in results if r["status"] == "error"),
+        "total": len(results),
+    }
+
+    return TEMPLATES.TemplateResponse("users_upload.html", {
+        "request": request,
+        "results": results,
+        "totals": totals,
+    })
 
 
 @app.post("/goals/{goal_id}/attach-cycle")

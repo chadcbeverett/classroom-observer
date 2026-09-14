@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+{% block title %}Bring in your roster · Classroom Observer{% endblock %}
+{% block content %}
+
+<p class="crumbs"><a href="/admin/district-context">← District context</a></p>
+
+<div class="page-header">
+  <div>
+    <h1><svg class="icon icon-lg"><use href="#icon-teachers"/></svg>Bring in your roster</h1>
+    <p class="muted">Bulk-load teachers and coaches from a CSV. Idempotent — running the same file twice is safe.</p>
+  </div>
+</div>
+
+<section class="card">
+  <h2><svg class="icon icon-sm"><use href="#icon-lesson-plan"/></svg>What the CSV needs to look like</h2>
+  <p class="muted small">
+    A header row plus one row per person. Column order doesn't matter; extra columns are ignored.
+    List coaches <em>before</em> the teachers who reference them.
+  </p>
+
+  <div class="csv-schema">
+    <table class="obs-table">
+      <thead>
+        <tr>
+          <th>Column</th>
+          <th>Required</th>
+          <th>What it holds</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td><code>name</code></td><td>yes</td><td>Display name. e.g. <em>Ms. Rivera</em></td></tr>
+        <tr><td><code>email</code></td><td>coaches yes; teachers optional</td><td>Login email. Matches on <code>(org, email)</code> so a re-upload skips duplicates.</td></tr>
+        <tr><td><code>role</code></td><td>yes</td><td>One of: <code>teacher</code>, <code>coach</code>, <code>principal</code>, <code>district</code>.</td></tr>
+        <tr><td><code>employee_id</code></td><td>optional</td><td>Your district's unique id. Also used for de-dup on teachers.</td></tr>
+        <tr><td><code>assigned_coach_email</code></td><td>teachers only, optional</td><td>The coach's email. That coach must already be on file or listed earlier in this CSV.</td></tr>
+        <tr><td><code>grade_levels</code></td><td>teachers only, optional</td><td>Comma-separated inside a quoted cell. e.g. <code>"6,7,8"</code></td></tr>
+        <tr><td><code>subjects</code></td><td>teachers only, optional</td><td>Comma-separated inside a quoted cell. e.g. <code>"Math,Science"</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <details style="margin-top: 12px;">
+    <summary class="muted small" style="cursor: pointer;">See an example</summary>
+    <pre class="csv-example">name,email,role,employee_id,assigned_coach_email,grade_levels,subjects
+Alex Coach,alex@district.org,coach,C0001,,,
+Ms. Rivera,rivera@district.org,teacher,T0421,alex@district.org,"6,7,8","Math,Science"
+Mr. Adeyemi,adeyemi@district.org,teacher,T0422,alex@district.org,"9,10","English"
+Principal Chen,chen@district.org,principal,,,,
+</pre>
+  </details>
+</section>
+
+<section class="card">
+  <h2><svg class="icon icon-sm"><use href="#icon-arrow-right"/></svg>Bring in a CSV</h2>
+  <form method="post" action="/admin/users/upload" enctype="multipart/form-data">
+    <label>Your CSV file
+      <input type="file" name="csv_file" accept=".csv,text/csv" required>
+    </label>
+    <button type="submit">Bring it in</button>
+  </form>
+  <p class="muted small" style="margin-top: 6px;">
+    Runs create-only. Rows already on file (matched by email or employee id) are skipped, not overwritten.
+    Archived matches are reported as errors so they don't quietly resurrect.
+  </p>
+</section>
+
+{% if results is not none %}
+<section class="card">
+  <h2><svg class="icon icon-sm"><use href="#icon-check"/></svg>What happened</h2>
+  <div class="stat-strip" style="margin-bottom: 16px;">
+    <div class="stat-card">
+      <div class="stat-label">Rows in file</div>
+      <div class="stat-value">{{ totals.total }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">New teachers</div>
+      <div class="stat-value">{{ totals.created }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Users added</div>
+      <div class="stat-value">{{ totals.ok }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Already on file</div>
+      <div class="stat-value">{{ totals.already_on_file }}</div>
+    </div>
+    <div class="stat-card {{ 'warm' if totals.errors else '' }}">
+      <div class="stat-label">Errors</div>
+      <div class="stat-value">{{ totals.errors }}</div>
+    </div>
+  </div>
+
+  {% if results %}
+  <div style="overflow-x: auto;">
+  <table class="obs-table row-list">
+    <thead>
+      <tr>
+        <th>Line</th>
+        <th>Name</th>
+        <th>Role</th>
+        <th>Where it landed</th>
+        <th>Note</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in results %}
+      <tr class="upload-row upload-row-{{ r.status|replace(' ', '-') }}">
+        <td class="muted small">{{ r.line }}</td>
+        <td><strong>{{ r.name or '—' }}</strong>
+          {% if r.email %}<div class="muted small">{{ r.email }}</div>{% endif %}
+        </td>
+        <td>{{ r.role or '—' }}</td>
+        <td>
+          {% if r.status == 'created' %}
+            <span class="pill" style="background: #d7ecd8; color: #1c4d1e;">Added</span>
+          {% elif r.status == 'ok' %}
+            <span class="pill" style="background: #d7ecd8; color: #1c4d1e;">Added</span>
+          {% elif r.status == 'already on file' %}
+            <span class="pill" style="background: #eee; color: #444;">Already on file</span>
+          {% elif r.status == 'error' %}
+            <span class="pill pill-impl-regressed">Skipped — error</span>
+          {% else %}
+            <span class="pill">{{ r.status }}</span>
+          {% endif %}
+        </td>
+        <td class="muted small">{{ r.note or '' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+</section>
+{% endif %}
+
+<style>
+  .csv-schema code { font-family: 'SF Mono', Menlo, monospace; font-size: 12px; padding: 2px 6px; background: #f4f4f4; border-radius: 3px; }
+  .csv-example { font-family: 'SF Mono', Menlo, monospace; font-size: 12px; padding: 12px; background: #f4f4f4; border-radius: 4px; overflow-x: auto; }
+  .upload-row-error td { background: #fdf2f0; }
+  .upload-row-already-on-file td { background: #fafafa; color: #666; }
+</style>
+
+{% endblock %}
