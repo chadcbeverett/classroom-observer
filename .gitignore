@@ -1,0 +1,22 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Environment / secrets
+.env
+
+# Baseline scoring output + main DB (data, not code)
+reports/
+
+# Runtime data — user-authored records must stay out of the repo
+app/db.sqlite
+app/db.sqlite-journal
+app/db.sqlite-wal
+app/db.sqlite-shm
+app/uploads/
+app/lesson_plans/
+app/district_documents/
+
+# macOS
+.DS_Store

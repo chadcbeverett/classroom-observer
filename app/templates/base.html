@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Classroom Observer{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  {# SVG symbol library: reference with <svg class="icon"><use href="#icon-teachers"/></svg> #}
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <defs>
+      <symbol id="icon-dashboard" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/>
+        <rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/>
+      </symbol>
+      <symbol id="icon-teachers" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+        <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+      </symbol>
+      <symbol id="icon-observations" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+      </symbol>
+      <symbol id="icon-lesson-plan" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+        <polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/>
+      </symbol>
+      <symbol id="icon-district" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 21h18"/><path d="M5 21V7l7-4 7 4v14"/>
+        <path d="M9 9h2"/><path d="M13 9h2"/><path d="M9 13h2"/><path d="M13 13h2"/><path d="M9 17h6"/>
+      </symbol>
+      <symbol id="icon-cycle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
+        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+      </symbol>
+      <symbol id="icon-goal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>
+      </symbol>
+      <symbol id="icon-action" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+      </symbol>
+      <symbol id="icon-video" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polygon points="5 3 19 12 5 21 5 3"/>
+      </symbol>
+      <symbol id="icon-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+        <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+      </symbol>
+      <symbol id="icon-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+      </symbol>
+      <symbol id="icon-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>
+      </symbol>
+      <symbol id="icon-arrow-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
+      </symbol>
+      <symbol id="icon-trend-up" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/>
+      </symbol>
+      <symbol id="icon-sparkle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/>
+      </symbol>
+    </defs>
+  </svg>
+
+  <header>
+    <div class="wrap">
+      <a href="/" class="brand">
+        <svg class="icon brand-icon"><use href="#icon-sparkle"/></svg>
+        Classroom Observer
+      </a>
+      <nav>
+        <a href="/"><svg class="icon"><use href="#icon-dashboard"/></svg>Dashboard</a>
+        <a href="/teachers"><svg class="icon"><use href="#icon-teachers"/></svg>Teachers</a>
+        <a href="/observations"><svg class="icon"><use href="#icon-observations"/></svg>Observations</a>
+        <a href="/lesson-plans"><svg class="icon"><use href="#icon-lesson-plan"/></svg>Lesson plans</a>
+        <a href="/admin/district-context"><svg class="icon"><use href="#icon-district"/></svg>District</a>
+      </nav>
+      {% set _v = request.state.viewer if request.state and request.state.viewer else {'role':'coach'} %}
+      <div class="viewer-chip {{ 'as-teacher' if _v.role == 'teacher' }}{{ ' as-principal' if _v.role == 'principal' }}{{ ' as-district' if _v.role == 'district' }}">
+        {% if _v.role == 'coach' %}
+          <svg class="icon icon-sm"><use href="#icon-check"/></svg>
+          Viewing as coach
+          <form method="post" action="/whoami/switch" style="display:inline;margin-left:6px;">
+            <input type="hidden" name="role" value="principal">
+            <button type="submit" class="viewer-return">→ principal</button>
+          </form>
+          <form method="post" action="/whoami/switch" style="display:inline;margin-left:4px;">
+            <input type="hidden" name="role" value="district">
+            <button type="submit" class="viewer-return">→ district</button>
+          </form>
+        {% elif _v.role == 'principal' %}
+          <svg class="icon icon-sm"><use href="#icon-district"/></svg>
+          Viewing as principal
+          <form method="post" action="/whoami/switch" style="display:inline;margin-left:6px;">
+            <input type="hidden" name="role" value="district">
+            <button type="submit" class="viewer-return">→ district</button>
+          </form>
+          <form method="post" action="/whoami/switch" style="display:inline;margin-left:4px;">
+            <input type="hidden" name="role" value="coach">
+            <button type="submit" class="viewer-return">Back to coach</button>
+          </form>
+        {% elif _v.role == 'district' %}
+          <svg class="icon icon-sm"><use href="#icon-district"/></svg>
+          Viewing as district
+          <form method="post" action="/whoami/switch" style="display:inline;margin-left:6px;">
+            <input type="hidden" name="role" value="coach">
+            <button type="submit" class="viewer-return">Back to coach</button>
+          </form>
+        {% else %}
+          <svg class="icon icon-sm"><use href="#icon-teachers"/></svg>
+          Viewing as teacher
+          <form method="post" action="/whoami/switch" style="display:inline;margin-left:6px;">
+            <input type="hidden" name="role" value="coach">
+            <button type="submit" class="viewer-return">Back to coach</button>
+          </form>
+        {% endif %}
+      </div>
+    </div>
+  </header>
+  <main>
+    <div class="wrap">
+      {% block content %}{% endblock %}
+    </div>
+  </main>
+  <footer>
+    <div class="wrap muted">
+      Local instance · Classroom Observer
+    </div>
+  </footer>
+</body>
+</html>

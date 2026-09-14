@@ -1,0 +1,197 @@
+{% extends "base.html" %}
+{% block title %}District dashboard · Classroom Observer{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h1><svg class="icon icon-lg"><use href="#icon-district"/></svg>District dashboard</h1>
+    <p class="muted">School-by-school comparison and initiative tracking · academic year {{ academic_year }}</p>
+  </div>
+  <div class="page-header-meta">
+    <a class="button-link secondary" href="/compliance">
+      <svg class="icon icon-sm"><use href="#icon-check"/></svg>Compliance report
+    </a>
+    <span class="count-chip">District view</span>
+  </div>
+</div>
+
+{# ---- District-wide topline ---- #}
+<section class="stat-strip">
+  <div class="stat-card">
+    <div class="stat-label"><svg class="icon"><use href="#icon-district"/></svg>Schools</div>
+    <div class="stat-value">{{ total_schools }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label"><svg class="icon"><use href="#icon-teachers"/></svg>Teachers</div>
+    <div class="stat-value">{{ total_teachers }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label"><svg class="icon"><use href="#icon-cycle"/></svg>Active cycles</div>
+    <div class="stat-value">{{ total_active_cycles }}</div>
+  </div>
+</section>
+
+{# ---- Section 1: School comparison ---- #}
+<div class="section-title-row">
+  <h2><svg class="icon"><use href="#icon-district"/></svg>School-by-school comparison</h2>
+</div>
+{% if schools %}
+<section class="card" style="padding: 0; overflow: hidden;">
+<table class="obs-table row-list">
+  <thead>
+    <tr>
+      <th>School</th>
+      <th>Teachers</th>
+      <th>Complete observations</th>
+      <th>Active cycles</th>
+      <th>Moves published</th>
+      <th>Weakest domain</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for s in schools %}
+    <tr>
+      <td><strong>{{ s.name }}</strong></td>
+      <td>{{ s.teachers }}</td>
+      <td>{{ s.observations }}</td>
+      <td>{{ s.active_cycles }}</td>
+      <td>{{ s.moves_published }}</td>
+      <td>
+        {% if s.weakest_domain %}
+          <span class="pill pill-impl-partial">{{ s.weakest_domain }}</span>
+          <span class="muted small">{{ s.weak_pct }}% weak</span>
+        {% else %}
+          <span class="muted small">—</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</section>
+{% if schools|length == 1 %}
+<div class="muted small" style="margin-top: 8px;">
+  Only one school on record. When your district adds more schools, they appear here for side-by-side comparison.
+</div>
+{% endif %}
+{% else %}
+<div class="empty-cta compact">
+  <span class="empty-cta-icon"><svg class="icon"><use href="#icon-district"/></svg></span>
+  <h3>No schools on record</h3>
+</div>
+{% endif %}
+
+{# ---- Section 2: District priorities in force ---- #}
+<div class="section-title-row">
+  <h2><svg class="icon"><use href="#icon-sparkle"/></svg>District priorities in force</h2>
+</div>
+<section class="district-priorities">
+  <div class="district-priorities-panel">
+    <h3 class="prep-panel-title">
+      <svg class="icon"><use href="#icon-cycle"/></svg>
+      Arc of the year
+    </h3>
+    {% if district_context and district_context.year_arc %}
+      <ol class="arc-list">
+        {% for phase in district_context.year_arc %}
+        <li>
+          <div class="arc-phase-name">{{ phase.name or phase.label or 'Phase' }}</div>
+          {% if phase.months %}
+            <div class="muted small">{{ phase.months|join(', ') if phase.months is iterable and phase.months is not string else phase.months }}</div>
+          {% endif %}
+          {% if phase.focus or phase.description %}
+            <p class="muted small" style="margin: 4px 0 0;">{{ phase.focus or phase.description }}</p>
+          {% endif %}
+        </li>
+        {% endfor %}
+      </ol>
+    {% else %}
+      <div class="muted small">
+        No year arc on file for {{ academic_year }}.
+        <a href="/admin/district-context">Configure the district context →</a>
+      </div>
+    {% endif %}
+  </div>
+
+  <div class="district-priorities-panel">
+    <h3 class="prep-panel-title">
+      <svg class="icon"><use href="#icon-lesson-plan"/></svg>
+      Uploaded documents ({{ district_docs|length }})
+    </h3>
+    {% if district_docs %}
+      <ul class="tv-simple-list">
+        {% for d in district_docs %}
+        <li>
+          <div>
+            <strong>{{ d.title }}</strong>
+            {% if d.doc_type %}<span class="pill" style="margin-left: 6px;">{{ d.doc_type|replace('_', ' ') }}</span>{% endif %}
+            <div class="muted small">{{ d.original_filename }} · uploaded {{ d.uploaded_at[:10] }}</div>
+          </div>
+        </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <div class="muted small">
+        No district documents uploaded yet.
+        <a href="/admin/district-context">Upload from the district context page →</a>
+      </div>
+    {% endif %}
+  </div>
+</section>
+
+{# ---- Section 3: Initiative engagement ---- #}
+<div class="section-title-row">
+  <h2><svg class="icon"><use href="#icon-trend-up"/></svg>Initiative engagement</h2>
+</div>
+<section class="card">
+  {% if engagement %}
+    <p class="muted small">
+      Rough measure: how many active teacher goals mention keywords drawn from your district documents and year-arc phase names.
+      Scanned {{ keywords_scanned }} keyword{{ 's' if keywords_scanned != 1 }} from your district context.
+    </p>
+    <ul class="engagement-list">
+      {% for e in engagement %}
+      <li>
+        <span class="engagement-kw">
+          {% if e.kind == 'priority' %}{{ e.keyword }}{% elif e.kind == 'retired_priority' %}{{ e.keyword }} <span class="badge-retired" title="No longer in the current district priorities — but the goals tied to it are still tracked here.">retired</span>{% else %}"{{ e.keyword }}"{% endif %}
+        </span>
+        <div class="engagement-bar" style="width: {{ (e.goal_matches * 50) if e.goal_matches < 20 else '100%' }}px;">
+          <div class="engagement-fill" style="width: 100%;"></div>
+        </div>
+        <span class="muted small">
+          {% if e.kind == 'priority' %}
+            {{ e.goal_matches }} goal{{ 's' if e.goal_matches != 1 }} tagged
+            {% if e.closed_met %} · <span style="color:#1c4d1e;font-weight:600;">{{ e.closed_met }} met</span>{% endif %}
+            {% if e.closed_partial %} · {{ e.closed_partial }} partial{% endif %}
+          {% elif e.kind == 'retired_priority' %}
+            {{ e.goal_matches }} goal{{ 's' if e.goal_matches != 1 }} historically tagged
+            {% if e.closed_met %} · <span style="color:#1c4d1e;font-weight:600;">{{ e.closed_met }} met</span>{% endif %}
+            {% if e.closed_partial %} · {{ e.closed_partial }} partial{% endif %}
+          {% else %}
+            {{ e.goal_matches }} untagged goal{{ 's' if e.goal_matches != 1 }} mentioning
+          {% endif %}
+        </span>
+      </li>
+      {% endfor %}
+    </ul>
+    <p class="muted small" style="margin-top: 14px;">
+      <em>Note:</em> keyword-matching is a rough proxy. A future version could tag each district document with themes and track engagement more precisely — including by school and by coach.
+    </p>
+  {% elif keywords_scanned %}
+    <p class="muted">
+      No active teacher goals currently mention any of the {{ keywords_scanned }} keywords drawn from district context.
+      Either the goals aren't yet aligned to district priorities, or the keywords aren't representative.
+    </p>
+  {% else %}
+    <div class="empty-cta compact">
+      <span class="empty-cta-icon"><svg class="icon"><use href="#icon-sparkle"/></svg></span>
+      <h3>No initiatives to track</h3>
+      <p>Upload district documents and set the year arc, then this section shows how well teacher goals align to your priorities.</p>
+      <a class="button-link" href="/admin/district-context">
+        <svg class="icon icon-sm"><use href="#icon-arrow-right"/></svg>Configure district context
+      </a>
+    </div>
+  {% endif %}
+</section>
+
+{% endblock %}

@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Teachers · Classroom Observer{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h1><svg class="icon icon-lg"><use href="#icon-teachers"/></svg>Teachers</h1>
+    <p class="muted">Roster with trend indicators per rubric domain.</p>
+  </div>
+  <div class="page-header-meta">
+    <span class="count-chip">{{ teachers|length }} teacher{{ 's' if teachers|length != 1 }}</span>
+  </div>
+</div>
+
+{% if not teachers %}
+  <div class="empty-cta">
+    <span class="empty-cta-icon"><svg class="icon"><use href="#icon-teachers"/></svg></span>
+    <h3>No teachers yet</h3>
+    <p>Upload an observation to add a teacher automatically.</p>
+    <a class="button-link" href="/observations">
+      <svg class="icon icon-sm"><use href="#icon-arrow-right"/></svg>Upload observation
+    </a>
+  </div>
+{% else %}
+<section class="card" style="padding: 0; overflow: hidden;">
+<table class="obs-table row-list">
+  <thead>
+    <tr>
+      <th></th>
+      <th>Teacher</th>
+      <th>Observations</th>
+      <th>Last scored</th>
+      {% for d in domains %}
+      <th title="{{ d }}">{{ d.split(' ')[0][:3]|upper }}</th>
+      {% endfor %}
+      <th>Goals</th>
+      <th>Actions</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for t in teachers %}
+    <tr>
+      <td class="avatar-cell">
+        <span class="avatar avatar-sm avatar-{{ avatar_palette[avatar_idx(t.name)] }}">
+          {{ (t.name[:1] | upper) }}
+        </span>
+      </td>
+      <td><a href="/teachers/{{ t.id }}" class="row-title">{{ t.name }}</a></td>
+      <td>{{ t.obs_count }}</td>
+      <td class="muted small">{{ t.last_scored }}</td>
+      {% for d in domains %}
+        {% set td = t.trend_by_domain[d] %}
+        <td>
+          {% if td.rating %}
+            <span class="rating rating-{{ td.rating|replace(' ', '-')|lower }}">{{ td.rating[:3]|upper }}</span>
+            <span class="trend trend-{{ td.trend }}">
+              {%- if td.trend == 'up' %}↑{% elif td.trend == 'down' %}↓{% elif td.trend == 'flat' %}·{% endif -%}
+            </span>
+          {% else %}
+            <span class="muted small">—</span>
+          {% endif %}
+        </td>
+      {% endfor %}
+      <td>{{ t.active_goal_count }}</td>
+      <td>{{ t.open_action_count }}</td>
+      <td><a class="button-link" href="/teachers/{{ t.id }}">Open →</a></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</section>
+{% endif %}
+
+{% endblock %}

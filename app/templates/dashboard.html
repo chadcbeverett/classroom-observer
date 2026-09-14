@@ -1,0 +1,304 @@
+{% extends "base.html" %}
+{% block title %}Dashboard · Classroom Observer{% endblock %}
+{% block content %}
+
+{# Avatar-color rotation deterministic by position. #}
+{% set _avatar_palette = ['blue', 'teal', 'amber', 'plum', 'green', 'rose'] %}
+{% macro avatar(name, idx) -%}
+  <span class="avatar avatar-{{ _avatar_palette[idx % 6] }}">{{ (name[:1] | upper) if name else '?' }}</span>
+{%- endmacro %}
+
+<div class="dash-greeting">
+  <h1>{{ greeting }}.</h1>
+</div>
+<p class="dash-lead">Here are today's openings.</p>
+
+<section class="dash-split">
+  {# ---- Attention panel ---- #}
+  <div class="attention-panel">
+    <div class="attention-panel-header">
+      <h2>
+        <svg class="icon"><use href="#icon-sparkle"/></svg>
+        Openings today
+      </h2>
+      <span class="attention-count {{ 'zero' if attention_total == 0 }}">{{ attention_total }}</span>
+    </div>
+
+    {% if attention_total == 0 %}
+      <div class="attention-empty">
+        <svg class="icon icon-lg"><use href="#icon-check"/></svg>
+        <div>Nothing waiting. Everything in the pipeline is fresh.</div>
+      </div>
+    {% else %}
+    <ul class="attention-list">
+      {# Teacher responses first — the conversation is already going. #}
+      {% for r in attention_responses %}
+        <li>
+          <a class="attention-item cool" href="/observations/{{ r.observation_id }}">
+            <svg class="icon"><use href="#icon-teachers"/></svg>
+            <div class="attention-body">
+              <div class="title">{{ r.teacher_name }} responded to your move</div>
+              <div class="sub">
+                {% if r.response_type == 'adjust' %}Wants to adjust — meet and align{% else %}Wants to talk it through with you{% endif %}
+                {% if r.teacher_note %} · "{{ r.teacher_note[:80] }}{{ '…' if r.teacher_note|length > 80 }}"{% endif %}
+              </div>
+            </div>
+            <div class="attention-meta">{{ r.days }}d</div>
+          </a>
+        </li>
+      {% endfor %}
+
+      {% for r in attention_debriefs %}
+        <li>
+          <a class="attention-item" href="/observations/{{ r.obs_id }}">
+            <svg class="icon"><use href="#icon-observations"/></svg>
+            <div class="attention-body">
+              <div class="title">
+                {% if r.no_move %}{{ r.teacher_name }}'s move is ready to publish
+                {% else %}{{ r.teacher_name }}'s debrief focus is ready to name
+                {% endif %}
+              </div>
+              <div class="sub">Observation scored {{ r.days }} day{{ 's' if r.days != 1 }} ago{% if r.no_move %} — draft + publish the coach's move so {{ r.teacher_name }} can respond{% else %} — name your debrief-focus move{% endif %}</div>
+            </div>
+            <div class="attention-meta">{{ r.days }}d</div>
+          </a>
+        </li>
+      {% endfor %}
+
+      {% for r in attention_actions %}
+        <li>
+          <a class="attention-item" href="/teachers/{{ r.teacher_id }}">
+            <svg class="icon"><use href="#icon-action"/></svg>
+            <div class="attention-body">
+              <div class="title">{{ r.teacher_name }}'s action is ready to assess</div>
+              <div class="sub">See what worked · "{{ r.bite_sized_action_text[:80] }}{{ '…' if r.bite_sized_action_text|length > 80 }}"</div>
+            </div>
+            <div class="attention-meta">{{ r.days }}d</div>
+          </a>
+        </li>
+      {% endfor %}
+
+      {% for r in attention_cycles %}
+        <li>
+          <a class="attention-item blue" href="/cycles/{{ r.cycle_id }}">
+            <svg class="icon"><use href="#icon-cycle"/></svg>
+            <div class="attention-body">
+              <div class="title">
+                {% if r.days_until < 0 %}{{ r.teacher_name }}'s cycle is closing — reflect together{% elif r.days_until == 0 %}{{ r.teacher_name }}'s cycle closes today — a good moment for reflection{% else %}{{ r.teacher_name }}'s cycle closes in {{ r.days_until }}d — start shaping the close{% endif %}
+              </div>
+              <div class="sub">Expected close: {{ r.expected_close_date }}</div>
+            </div>
+            <div class="attention-meta">
+              {% if r.days_until < 0 %}{{ -r.days_until }}d past{% else %}{{ r.days_until }}d{% endif %}
+            </div>
+          </a>
+        </li>
+      {% endfor %}
+
+      {% for r in attention_proposed_goals %}
+        <li>
+          <a class="attention-item blue" href="/teachers/{{ r.teacher_id }}">
+            <svg class="icon"><use href="#icon-goal"/></svg>
+            <div class="attention-body">
+              <div class="title">Goal waiting to be agreed with {{ r.teacher_name }}</div>
+              <div class="sub">"{{ r.title[:80] }}{{ '…' if r.title|length > 80 }}" — proposed {{ r.days }} day{{ 's' if r.days != 1 }} ago</div>
+            </div>
+            <div class="attention-meta">{{ r.days }}d</div>
+          </a>
+        </li>
+      {% endfor %}
+
+      {% for r in attention_no_profile %}
+        <li>
+          <a class="attention-item" href="/teachers/{{ r.teacher_id }}/profile/teacher">
+            <svg class="icon"><use href="#icon-teachers"/></svg>
+            <div class="attention-body">
+              <div class="title">{{ r.teacher_name }}'s profile is empty</div>
+              <div class="sub">Fill it in with them — years teaching, self-ratings, coaching-style preference. Sharpens the AI's next read.</div>
+            </div>
+            <div class="attention-meta">new</div>
+          </a>
+        </li>
+      {% endfor %}
+
+      {% for r in attention_obs_due %}
+        <li>
+          <a class="attention-item" href="/teachers/{{ r.teacher_id }}">
+            <svg class="icon"><use href="#icon-clock"/></svg>
+            <div class="attention-body">
+              <div class="title">{{ r.teacher_name }} is due for observation</div>
+              <div class="sub">Last observation {{ r.last_obs_at }} — {{ r.days_late }} day{{ 's' if r.days_late != 1 }} past the district cadence</div>
+            </div>
+            <div class="attention-meta">{{ r.days_late }}d</div>
+          </a>
+        </li>
+      {% endfor %}
+
+      {% for r in attention_lps %}
+        <li>
+          <a class="attention-item cool" href="/lesson-plans/{{ r.lp_id }}">
+            <svg class="icon"><use href="#icon-lesson-plan"/></svg>
+            <div class="attention-body">
+              <div class="title">
+                {% if r.status == 'submitted' %}{{ r.teacher_name }}'s plan is ready for your read
+                {% else %}{{ r.teacher_name }}'s revised plan is ready
+                {% endif %}
+              </div>
+              <div class="sub">{{ r.title }}</div>
+            </div>
+            <div class="attention-meta">{{ r.days }}d</div>
+          </a>
+        </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </div>
+
+  {# ---- Hero KPI ---- #}
+  {% if implementation_rate is not none %}
+    {% set kpi_class = 'hero-kpi' %}
+    {% if implementation_rate >= 60 %}{% set kpi_class = 'hero-kpi cool' %}
+    {% elif implementation_rate < 40 %}{% set kpi_class = 'hero-kpi warm' %}
+    {% endif %}
+  {% else %}
+    {% set kpi_class = 'hero-kpi dim' %}
+  {% endif %}
+  <div class="{{ kpi_class }}">
+    <div class="kpi-label">
+      <svg class="icon icon-sm"><use href="#icon-trend-up"/></svg>
+      Implementation rate
+    </div>
+    <div>
+      <div class="kpi-value {{ 'small' if implementation_rate is none }}">
+        {% if implementation_rate is not none %}{{ implementation_rate }}%{% else %}—{% endif %}
+      </div>
+      <div class="kpi-sub">
+        {% if assessed_actions %}
+          {{ assessed_actions }} of {{ total_actions }} actions assessed<br>
+          Success rate {% if success_rate is not none %}{{ success_rate }}%{% else %}—{% endif %}
+        {% else %}
+          No assessed actions yet
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</section>
+
+{# ---- Recent teachers ---- #}
+<div class="section-title-row">
+  <h2><svg class="icon"><use href="#icon-teachers"/></svg>Recent teachers</h2>
+  <a href="/teachers">All teachers →</a>
+</div>
+<div class="teacher-tiles">
+  {% for t in recent_teachers %}
+    <a href="/teachers/{{ t.id }}" class="teacher-tile">
+      {{ avatar(t.name, loop.index0) }}
+      <div>
+        <span class="teacher-name">{{ t.name }}</span>
+        <span class="teacher-sub">{{ t.obs_count }} observation{{ 's' if t.obs_count != 1 }}</span>
+      </div>
+    </a>
+  {% endfor %}
+</div>
+
+{# ---- Aggregate stat strip (lower visual weight) ---- #}
+<div class="section-title-row">
+  <h2><svg class="icon"><use href="#icon-dashboard"/></svg>Program at a glance</h2>
+</div>
+<section class="stat-strip">
+  <div class="stat-card">
+    <div class="stat-label"><svg class="icon"><use href="#icon-teachers"/></svg>Teachers</div>
+    <div class="stat-value">{{ teacher_count }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label"><svg class="icon"><use href="#icon-observations"/></svg>Observations</div>
+    <div class="stat-value">{{ obs_counts.total }}</div>
+    <div class="stat-sub">{{ obs_counts.complete }} complete · {{ obs_counts.in_flight }} in flight</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label"><svg class="icon"><use href="#icon-cycle"/></svg>Active cycles</div>
+    <div class="stat-value">{{ active_cycle_count }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label"><svg class="icon"><use href="#icon-goal"/></svg>Active goals</div>
+    <div class="stat-value">{{ active_goal_count }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label"><svg class="icon"><use href="#icon-action"/></svg>Actions issued</div>
+    <div class="stat-value">{{ total_actions }}</div>
+    <div class="stat-sub">{{ total_actions - assessed_actions }} awaiting</div>
+  </div>
+</section>
+
+{# ---- Rubric ratings distribution ---- #}
+<section class="card">
+  <h2><svg class="icon"><use href="#icon-goal"/></svg>Rubric ratings distribution</h2>
+  <p class="muted small" style="margin-top: -4px;">Across all published reports.</p>
+  {% for domain in domains %}
+    {% set counts = rating_counts.get(domain, {}) %}
+    {% set n = counts.values() | sum %}
+    <div class="domain-bar">
+      <div class="domain-bar-label"><strong>{{ domain }}</strong>
+        <span class="muted small">({{ n }} rating{{ 's' if n != 1 }})</span>
+      </div>
+      <div class="domain-bar-track">
+        {% if n %}
+          {% for lvl in rating_levels %}
+            {% set c = counts.get(lvl, 0) %}
+            {% if c %}
+            <div class="domain-bar-segment rating-{{ lvl|replace(' ', '-')|lower }}"
+                 style="width: {{ (c / n * 100)|round(1) }}%"
+                 title="{{ lvl }}: {{ c }} rating{{ 's' if c != 1 }}">
+              {{ c }}
+            </div>
+            {% endif %}
+          {% endfor %}
+        {% else %}
+          <div class="muted small" style="padding: 6px 10px;">no data</div>
+        {% endif %}
+      </div>
+    </div>
+  {% endfor %}
+</section>
+
+{# ---- Lesson plans by status ---- #}
+{% if lesson_plan_status_counts %}
+<section class="card">
+  <h2><svg class="icon"><use href="#icon-lesson-plan"/></svg>Lesson plans</h2>
+  <div class="lp-status-grid">
+    {% for k, v in lesson_plan_status_counts.items() %}
+      <div class="lp-status-cell">
+        <span class="pill pill-{{ k }}">{{ k|replace('_', ' ') }}</span>
+        <span class="lp-status-num">{{ v }}</span>
+      </div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+{# ---- Recent observations ---- #}
+<section class="card">
+  <h2><svg class="icon"><use href="#icon-observations"/></svg>Recent observations</h2>
+  {% if recent_observations %}
+    <table class="obs-table">
+      <thead>
+        <tr><th>Teacher</th><th>Video</th><th>Status</th><th>Uploaded</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for o in recent_observations %}
+        <tr>
+          <td>{{ o.teacher_name }}</td>
+          <td class="mono truncate">{{ o.video_filename }}</td>
+          <td><span class="badge badge-{{ o.status }}">{{ o.status }}</span></td>
+          <td class="muted small">{{ o.uploaded_at[:16] if o.uploaded_at else '—' }}</td>
+          <td><a class="button-link" href="/observations/{{ o.id }}">Open →</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="muted">No observations yet. <a href="/observations">Upload one →</a></p>
+  {% endif %}
+</section>
+
+{% endblock %}

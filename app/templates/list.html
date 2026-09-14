@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block title %}Observations · Classroom Observer{% endblock %}
+{% block content %}
+
+{% if not api_key_set %}
+<div class="banner banner-error">
+  <strong>ANTHROPIC_API_KEY is not set.</strong>
+  Export it in the terminal that runs the server, then restart. Uploads will
+  refuse to run until it's set.
+</div>
+{% endif %}
+
+<div class="page-header">
+  <div>
+    <h1><svg class="icon icon-lg"><use href="#icon-observations"/></svg>Observations</h1>
+    <p class="muted">Video, transcript, and Claude-scored report per session.</p>
+  </div>
+  <div class="page-header-meta">
+    <span class="count-chip">{{ observations|length }} total</span>
+  </div>
+</div>
+
+<section class="card">
+  <h2><svg class="icon icon-sm"><use href="#icon-video"/></svg>New observation</h2>
+  <form method="post" action="/upload" enctype="multipart/form-data">
+    <div class="row">
+      <label>Teacher name
+        <input type="text" name="teacher_name" required placeholder="e.g., Ms. Rivera">
+      </label>
+      <label>Rubric
+        <select name="rubric_id">
+          {% for r in rubrics %}
+          <option value="{{ r.id }}">{{ r.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Whisper model
+        <select name="whisper_model">
+          <option value="medium" selected>medium (recommended)</option>
+          <option value="small">small (faster, lower accuracy)</option>
+          <option value="large-v3">large-v3 (slower, higher accuracy)</option>
+        </select>
+      </label>
+    </div>
+    <div class="row">
+      <label>Observation date
+        <input type="date" name="observed_at" value="{{ today }}" max="{{ today }}">
+      </label>
+      <label class="grow">Video file
+        <input type="file" name="video" accept="video/*" required>
+      </label>
+      <button type="submit">Upload &amp; score</button>
+    </div>
+    <p class="muted small" style="margin-top: -4px;">
+      When did the lesson happen? Defaults to today; change if you're uploading later.
+      Lesson-plan attachment happens on the observation page after scoring.
+    </p>
+  </form>
+</section>
+
+<div class="section-title-row">
+  <h2><svg class="icon"><use href="#icon-cycle"/></svg>Past observations</h2>
+</div>
+
+{% if not observations %}
+  <div class="empty-cta">
+    <span class="empty-cta-icon"><svg class="icon"><use href="#icon-observations"/></svg></span>
+    <h3>No observations yet</h3>
+    <p>Upload a video with the form above to get your first rubric-scored report and coaching recommendations.</p>
+  </div>
+{% else %}
+<section class="card" style="padding: 0; overflow: hidden;">
+<table class="obs-table row-list">
+  <thead>
+    <tr>
+      <th></th>
+      <th>Teacher</th>
+      <th>Video</th>
+      <th>Duration</th>
+      <th>Uploaded</th>
+      <th>Status</th>
+      <th>Ratings</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for o in observations %}
+    <tr class="status-{{ o.status }}">
+      <td class="avatar-cell">
+        <span class="avatar avatar-sm avatar-{{ avatar_palette[avatar_idx(o.teacher)] }}">
+          {{ (o.teacher[:1] | upper) }}
+        </span>
+      </td>
+      <td><strong>{{ o.teacher }}</strong></td>
+      <td class="mono truncate">{{ o.video_filename }}</td>
+      <td class="muted small">{{ o.duration }}</td>
+      <td class="muted small">{{ o.uploaded_at }}</td>
+      <td>
+        <span class="badge badge-{{ o.status }}">{{ o.status }}</span>
+        {% if o.failure_reason %}
+          <div class="muted small">{{ o.failure_reason }}</div>
+        {% endif %}
+      </td>
+      <td class="ratings-cell">
+        {% for domain, rating in o.ratings.items() %}
+          <span class="rating rating-{{ rating|replace(' ', '-')|lower }}" title="{{ domain }}">{{ rating[:3]|upper }}</span>
+        {% endfor %}
+      </td>
+      <td><a class="button-link" href="/observations/{{ o.id }}">Open →</a></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</section>
+{% endif %}
+
+{% endblock %}

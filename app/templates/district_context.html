@@ -1,0 +1,210 @@
+{% extends "base.html" %}
+{% block title %}District context — {{ academic_year }}{% endblock %}
+{% block content %}
+
+<h1>District context</h1>
+<p class="muted">Per academic year: year arc (time-of-year phases), district priorities, and initiatives in flight.
+  Injected into the AI's prompt so its coaching recommendations are calibrated to what the district cares about right now.</p>
+
+<form method="get" action="/admin/district-context" class="inline-form">
+  <label>Academic year
+    <input type="text" name="year" value="{{ academic_year }}" size="10">
+  </label>
+  <button type="submit">Load</button>
+</form>
+
+<form method="post" action="/admin/district-context" class="card profile-form">
+  <input type="hidden" name="academic_year" value="{{ academic_year }}">
+
+  <h3>Year dates (optional)</h3>
+  <div class="row">
+    <label>Start date <input type="date" name="year_start_date" value="{{ ctx.year_start_date or '' if ctx else '' }}"></label>
+    <label>End date   <input type="date" name="year_end_date"   value="{{ ctx.year_end_date or '' if ctx else '' }}"></label>
+  </div>
+
+  <h3>District priorities this year</h3>
+  <p class="muted small">
+    Structured priorities are used by the teacher-hub "starter goal" chips + district
+    dashboard rollup. Each row: short name, longer description, and the rubric domain
+    it most directly targets.
+  </p>
+  <div id="priorities-editor">
+    {% set _priorities = (ctx.district_priorities_json if ctx and ctx.district_priorities_json else []) %}
+    {% for p in _priorities %}
+      {% set _pn = p.name if p.__class__.__name__ == 'dict' or (p is mapping) else p %}
+      {% set _pd = p.description if p is mapping else '' %}
+      {% set _pdom = (p.target_domains[0] if (p is mapping and p.get('target_domains')) else '') %}
+      <div class="priority-row">
+        <label>Name
+          <input type="text" name="priority_name_{{ loop.index0 }}" value="{{ _pn }}">
+        </label>
+        <label class="grow">Description
+          <input type="text" name="priority_desc_{{ loop.index0 }}" value="{{ _pd }}">
+        </label>
+        <label>Target domain
+          <select name="priority_domain_{{ loop.index0 }}">
+            <option value="">—</option>
+            {% for d in rubric_domains %}
+            <option value="{{ d }}" {{ 'selected' if _pdom == d }}>{{ d }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <button type="button" class="button-link secondary" onclick="this.closest('.priority-row').remove()">Remove</button>
+      </div>
+    {% endfor %}
+    {# Always show one empty row for adding a new one #}
+    <div class="priority-row">
+      <label>Name
+        <input type="text" name="priority_name_new_1" placeholder="e.g. Peer-to-peer discourse">
+      </label>
+      <label class="grow">Description
+        <input type="text" name="priority_desc_new_1" placeholder="One-sentence framing of what changes in classrooms">
+      </label>
+      <label>Target domain
+        <select name="priority_domain_new_1">
+          <option value="">—</option>
+          {% for d in rubric_domains %}<option value="{{ d }}">{{ d }}</option>{% endfor %}
+        </select>
+      </label>
+      <span></span>
+    </div>
+  </div>
+  <button type="button" class="button-link secondary" onclick="addPriorityRow()" style="margin-top: 6px;">
+    <svg class="icon icon-sm"><use href="#icon-arrow-right"/></svg>Add another priority
+  </button>
+  <script>
+    let _prio_counter = 2;
+    function addPriorityRow() {
+      const editor = document.getElementById('priorities-editor');
+      const row = document.createElement('div');
+      row.className = 'priority-row';
+      const n = 'new_' + (_prio_counter++);
+      row.innerHTML = `
+        <label>Name<input type="text" name="priority_name_${n}"></label>
+        <label class="grow">Description<input type="text" name="priority_desc_${n}"></label>
+        <label>Target domain<select name="priority_domain_${n}">
+          <option value="">—</option>
+          {% for d in rubric_domains %}<option value="{{ d }}">{{ d }}</option>{% endfor %}
+        </select></label>
+        <button type="button" class="button-link secondary" onclick="this.closest('.priority-row').remove()">Remove</button>
+      `;
+      editor.appendChild(row);
+    }
+  </script>
+
+  <h3>Initiatives in flight</h3>
+  <p class="muted small">One per line: <code>Name | grades (comma-sep) | description</code>. Example: <code>New ELA curriculum | 6,7,8 | Wit &amp; Wisdom roll-out</code>.</p>
+  <label>
+    <textarea name="initiatives" rows="4"
+      placeholder="New ELA curriculum | 6,7,8 | Wit & Wisdom roll-out&#10;Restorative practices PD | K-12 | Monthly PD sessions">{% if ctx and ctx.district_initiatives_json %}{% for i in ctx.district_initiatives_json %}{{ i.name }}{% if i.grades %} | {{ i.grades|join(',') }}{% else %} |{% endif %}{% if i.description %} | {{ i.description }}{% endif %}
+{% endfor %}{% endif %}</textarea>
+  </label>
+
+  <h3>Year arc (optional)</h3>
+  <p class="muted small">
+    One phase per line: <code>phase_name | start_month | end_month | description</code>. Months are 1-12; wraparound OK (e.g., 11|3 for Nov-Mar). Blank uses the platform-generic arc.
+  </p>
+  <label>
+    <textarea name="year_arc_raw" rows="6"
+      placeholder="onboarding | 8 | 8 | Setup and norming&#10;baseline | 9 | 10 | Baseline observations&#10;cycles | 11 | 3 | Coaching cycles&#10;renewal | 4 | 4 | Reflection and re-goal-setting&#10;testing_prep | 5 | 6 | State-testing focus">{% if ctx and ctx.year_arc_json %}{% for p in ctx.year_arc_json %}{{ p.phase }} | {{ p.start_month }} | {{ p.end_month }} | {{ p.description or '' }}
+{% endfor %}{% endif %}</textarea>
+  </label>
+
+  <h3>Observation expectations</h3>
+  <p class="muted small">
+    Sets the coaching cadence targets used by the compliance report and the "next observation due" indicator on teacher hubs.
+  </p>
+  <div class="row">
+    <label>Observations per teacher per year
+      <input type="number" name="observations_per_year_target" min="1" max="30"
+             value="{{ ctx.observations_per_year_target if ctx and ctx.observations_per_year_target else '' }}"
+             placeholder="e.g. 6">
+    </label>
+    <label>Max days between observations
+      <input type="number" name="days_between_obs_target" min="1" max="180"
+             value="{{ ctx.days_between_obs_target if ctx and ctx.days_between_obs_target else '' }}"
+             placeholder="e.g. 30">
+    </label>
+    <label>Days from observation to debrief
+      <input type="number" name="days_from_obs_to_debrief_target" min="1" max="30"
+             value="{{ ctx.days_from_obs_to_debrief_target if ctx and ctx.days_from_obs_to_debrief_target else '' }}"
+             placeholder="e.g. 5">
+    </label>
+  </div>
+
+  <div class="row">
+    <button type="submit">Save district context</button>
+  </div>
+</form>
+
+{# ---- Uploaded documents (arc-of-year, coaching framework, curriculum pacing, etc.) ---- #}
+<section class="card">
+  <h2>Uploaded documents</h2>
+  <p class="muted small">
+    Upload PDFs or DOCX files (arc-of-year, coaching framework, curriculum pacing guides, etc.).
+    Text is extracted server-side and injected into the AI's scoring context so recommendations
+    align with the district's own materials.
+  </p>
+  {% if documents %}
+    <table class="obs-table">
+      <thead>
+        <tr>
+          <th>Title</th>
+          <th>Type</th>
+          <th>File</th>
+          <th>Uploaded</th>
+          <th>Text extracted?</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in documents %}
+        <tr>
+          <td><strong>{{ d.title }}</strong></td>
+          <td>{{ d.doc_type or '—' }}</td>
+          <td class="mono truncate">{{ d.original_filename }}</td>
+          <td class="muted small">{{ d.uploaded_at[:10] }}</td>
+          <td>{% if d.extracted_text %}✓ ({{ d.extracted_text|length }} chars){% else %}—{% endif %}</td>
+          <td>
+            <form method="post" action="/admin/district-documents/{{ d.id }}/archive" style="display:inline;">
+              <input type="hidden" name="academic_year" value="{{ academic_year }}">
+              <button type="submit" class="button-link secondary">Archive</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="muted">No documents uploaded for {{ academic_year }} yet.</p>
+  {% endif %}
+
+  <details class="add-form">
+    <summary>+ Upload a document</summary>
+    <form method="post" action="/admin/district-documents" enctype="multipart/form-data">
+      <input type="hidden" name="academic_year" value="{{ academic_year }}">
+      <div class="row">
+        <label class="grow">Title
+          <input type="text" name="title" required placeholder="Arc of the Year 26-27">
+        </label>
+        <label>Type
+          <select name="doc_type">
+            <option value="">—</option>
+            <option value="arc_of_year">Arc of the year</option>
+            <option value="coaching_framework">Coaching framework</option>
+            <option value="curriculum_pacing">Curriculum pacing</option>
+            <option value="rubric_addendum">Rubric addendum</option>
+            <option value="pd_calendar">PD calendar</option>
+            <option value="other">Other</option>
+          </select>
+        </label>
+      </div>
+      <label>File (PDF or DOCX)
+        <input type="file" name="document" accept=".pdf,.docx,.doc,.txt,.md" required>
+      </label>
+      <button type="submit">Upload</button>
+    </form>
+  </details>
+</section>
+
+{% endblock %}

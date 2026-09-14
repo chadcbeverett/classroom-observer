@@ -1,0 +1,200 @@
+{% extends "base.html" %}
+{% block title %}Edit {{ side }} profile — {{ teacher.name }}{% endblock %}
+{% block content %}
+
+{% set _avatar_palette = ['blue', 'teal', 'amber', 'plum', 'green', 'rose'] %}
+{% set _avatar_class = _avatar_palette[avatar_idx % 6] %}
+
+<p class="crumbs"><a href="/teachers/{{ teacher.id }}">← {{ teacher.name }}</a></p>
+
+{# ---- Hero card ---- #}
+<section class="teacher-hero">
+  <a href="/teachers/{{ teacher.id }}" class="avatar avatar-lg avatar-{{ _avatar_class }}" style="text-decoration:none;">
+    {{ (teacher.name[:1] | upper) }}
+  </a>
+  <div class="teacher-hero-body">
+    <div class="obs-spotlight-label" style="color: var(--accent-deep);">
+      {% if side == 'teacher' %}
+        <svg class="icon icon-sm"><use href="#icon-teachers"/></svg>
+        Editing teacher side
+      {% else %}
+        <svg class="icon icon-sm"><use href="#icon-check"/></svg>
+        Editing coach side
+      {% endif %}
+    </div>
+    <h1>{{ teacher.name }}</h1>
+    <p class="teacher-hero-summary">
+      {% if side == 'teacher' %}
+        Quantitative facts and self-ratings supplied by the teacher.
+      {% else %}
+        Coach's public observations. <strong>Visible to the teacher.</strong>
+        For private working-theory notes, use the private-notes section on the teacher page.
+      {% endif %}
+    </p>
+  </div>
+</section>
+
+<form method="post" action="/teachers/{{ teacher.id }}/profile/{{ side }}" class="profile-form-stack">
+
+  {% if side == 'teacher' %}
+
+    {# --- Experience --- #}
+    <section class="card profile-form">
+      <h2><svg class="icon icon-sm"><use href="#icon-teachers"/></svg>Experience</h2>
+      <div class="row">
+        <label>Years teaching (total)
+          <input type="number" min="0" name="years_teaching_total"
+                 value="{{ profile.years_teaching_total or '' }}">
+        </label>
+        <label>Years in this subject
+          <input type="number" min="0" name="years_teaching_subject"
+                 value="{{ profile.years_teaching_subject or '' }}">
+        </label>
+        <label>Years at current school
+          <input type="number" min="0" name="years_at_current_school"
+                 value="{{ profile.years_at_current_school or '' }}">
+        </label>
+      </div>
+      <div class="row">
+        <label>Highest credential
+          <select name="highest_credential">
+            {% set current = profile.highest_credential or '' %}
+            <option value="" {{ 'selected' if current == '' }}>—</option>
+            {% for c in ['bachelors', 'masters', 'doctorate', 'national_board_certified', 'other'] %}
+            <option value="{{ c }}" {{ 'selected' if current == c }}>{{ c|replace('_', ' ') }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label class="grow">Subjects taught (comma-separated)
+          <input type="text" name="subjects_taught"
+                 value="{{ profile.subjects_taught|join(', ') if profile.subjects_taught else '' }}"
+                 placeholder="Math, Science">
+        </label>
+        <label class="grow">Grade levels (comma-separated)
+          <input type="text" name="grade_levels_taught"
+                 value="{{ profile.grade_levels_taught|join(', ') if profile.grade_levels_taught else '' }}"
+                 placeholder="6, 7, 8">
+        </label>
+      </div>
+    </section>
+
+    {# --- Self-ratings --- #}
+    <section class="card profile-form">
+      <h2><svg class="icon icon-sm"><use href="#icon-goal"/></svg>Self-ratings (1–5)</h2>
+      <p class="muted small">Rate your own comfort/effectiveness on each dimension. Your coach uses this to calibrate feedback framing.</p>
+      <div class="row">
+        {% for dim in self_rating_dimensions %}
+        <label>{{ dim|replace('_', ' ')|title }}
+          <select name="self_rating_{{ dim }}">
+            {% set current = (profile.self_ratings or {}).get(dim, '') %}
+            <option value="" {{ 'selected' if current == '' }}>—</option>
+            {% for n in range(1, 6) %}
+            <option value="{{ n }}" {{ 'selected' if current == n }}>{{ n }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        {% endfor %}
+      </div>
+    </section>
+
+    {# --- Preferences & context --- #}
+    <section class="card profile-form">
+      <h2><svg class="icon icon-sm"><use href="#icon-sparkle"/></svg>Preferences and context</h2>
+      {% set style = profile.coaching_style_preference or '' %}
+      {% set known_styles = ['direct', 'warm', 'socratic', 'structured', 'collaborative'] %}
+      <label>Coaching-style preference
+        <select name="coaching_style_preference_select"
+                onchange="document.getElementById('style-other').style.display = this.value === 'other' ? 'flex' : 'none';">
+          <option value="" {{ 'selected' if not style }}>—</option>
+          {% for s in known_styles %}
+          <option value="{{ s }}" {{ 'selected' if style == s }}>{{ s }}</option>
+          {% endfor %}
+          <option value="other" {{ 'selected' if style and style not in known_styles }}>other (specify)</option>
+        </select>
+      </label>
+      <label id="style-other" style="display: {{ 'flex' if style and style not in known_styles else 'none' }};">
+        Or specify
+        <input type="text" name="coaching_style_preference_other"
+               value="{{ style if style not in known_styles else '' }}">
+      </label>
+      <label>Career narrative
+        <textarea name="career_narrative_notes" rows="3"
+                  placeholder="Brief context about your teaching trajectory (career switcher, second-generation teacher, etc.)">{{ profile.career_narrative_notes or '' }}</textarea>
+      </label>
+      <label>Career goals
+        <textarea name="career_goals_notes" rows="3"
+                  placeholder="Where do you want to grow this year? Long-term?">{{ profile.career_goals_notes or '' }}</textarea>
+      </label>
+    </section>
+
+  {% else %}
+
+    {# --- Coach observations --- #}
+    <section class="card profile-form">
+      <h2><svg class="icon icon-sm"><use href="#icon-observations"/></svg>Coach observations</h2>
+      <p class="muted small">Visible to the teacher.</p>
+      <label>Observed style / classroom presence
+        <textarea name="observed_style_notes" rows="3"
+                  placeholder="What you've noticed about how this teacher operates in the classroom.">{{ profile.observed_style_notes or '' }}</textarea>
+      </label>
+      <label>Notes on the teacher
+        <textarea name="coach_notes_on_teacher" rows="4"
+                  placeholder="Framing that helps future observations. Kept public — the teacher sees these.">{{ profile.coach_notes_on_teacher or '' }}</textarea>
+      </label>
+    </section>
+
+    {# --- Skill-development trajectory --- #}
+    <section class="card profile-form">
+      <h2><svg class="icon icon-sm"><use href="#icon-sparkle"/></svg>Skill-development trajectory</h2>
+      <p class="muted small">
+        A running narrative of what the teacher is working to master and where they have been in development.
+        Updated as the coaching relationship evolves. Distinct from per-observation reports.
+      </p>
+      <label>Narrative
+        <textarea name="skill_development_narrative" rows="5"
+                  placeholder="This school year they have moved from establishing classroom management to leaning into student discourse. Two cycles ago they focused on peer-response routines; this cycle they are extending into probing follow-ups...">{{ profile.skill_development_narrative or '' }}</textarea>
+      </label>
+    </section>
+
+    {# --- Coach ratings + gap --- #}
+    <section class="card profile-form">
+      <h2><svg class="icon icon-sm"><use href="#icon-goal"/></svg>Coach ratings (1–5) — mirror the teacher's self-ratings</h2>
+      <p class="muted small">
+        Rate the teacher on the same dimensions the teacher self-rates. Optional per-dimension context explains your rating.
+        The <em>gap</em> between coach and teacher rating is itself a coaching signal.
+      </p>
+      <div class="row">
+        {% for dim in self_rating_dimensions %}
+        <label>{{ dim|replace('_', ' ')|title }}
+          <select name="coach_rating_{{ dim }}">
+            {% set current = (profile.coach_ratings or {}).get(dim, '') %}
+            <option value="" {{ 'selected' if current == '' }}>—</option>
+            {% for n in range(1, 6) %}
+            <option value="{{ n }}" {{ 'selected' if current == n }}>{{ n }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        {% endfor %}
+      </div>
+      {% for dim in self_rating_dimensions %}
+      <label>Context — {{ dim|replace('_', ' ')|title }}
+        <input type="text" name="coach_rating_ctx_{{ dim }}"
+               value="{{ (profile.coach_ratings_context or {}).get(dim, '') }}"
+               placeholder="Why this rating? Anything specific?">
+      </label>
+      {% endfor %}
+    </section>
+
+  {% endif %}
+
+  {# --- Sticky action bar --- #}
+  <div class="form-action-bar">
+    <a class="button-link secondary" href="/teachers/{{ teacher.id }}">Cancel</a>
+    <button type="submit">
+      <svg class="icon icon-sm"><use href="#icon-check"/></svg>
+      Save {{ 'teacher' if side == 'teacher' else 'coach' }} profile
+    </button>
+  </div>
+</form>
+
+{% endblock %}

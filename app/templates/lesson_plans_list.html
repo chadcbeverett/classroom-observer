@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}Lesson plans — {{ teacher.name }}{% endblock %}
+{% block content %}
+
+{% set _avatar_class = avatar_palette[avatar_idx(teacher.name)] %}
+
+<p class="crumbs"><a href="/teachers/{{ teacher.id }}">← {{ teacher.name }}</a></p>
+
+<section class="teacher-hero">
+  <a href="/teachers/{{ teacher.id }}" class="avatar avatar-lg avatar-{{ _avatar_class }}" style="text-decoration:none;">
+    {{ (teacher.name[:1] | upper) }}
+  </a>
+  <div class="teacher-hero-body">
+    <div class="obs-spotlight-label" style="color: var(--accent-deep);">
+      <svg class="icon icon-sm"><use href="#icon-lesson-plan"/></svg>
+      Lesson plans
+    </div>
+    <h1>{{ teacher.name }}</h1>
+    <p class="teacher-hero-summary">
+      {{ plans|length }} plan{{ 's' if plans|length != 1 }} on file
+    </p>
+  </div>
+</section>
+
+<section class="card">
+  <h2><svg class="icon icon-sm"><use href="#icon-lesson-plan"/></svg>Upload a new plan</h2>
+  <form method="post" action="/teachers/{{ teacher.id }}/lesson-plans" enctype="multipart/form-data">
+    <div class="row">
+      <label class="grow">Title / topic
+        <input type="text" name="title" required placeholder="Unit 3, Lesson 5: Misplaced modifiers">
+      </label>
+      <label>Plan covers (start)
+        <input type="date" name="plan_start_date">
+      </label>
+      <label>Plan covers (end)
+        <input type="date" name="plan_end_date">
+      </label>
+    </div>
+    <label>File (PDF or DOCX)
+      <input type="file" name="document" accept=".pdf,.docx,.doc" required>
+    </label>
+    <button type="submit">Upload plan</button>
+  </form>
+</section>
+
+<div class="section-title-row">
+  <h2><svg class="icon"><use href="#icon-cycle"/></svg>Plans on file</h2>
+</div>
+
+{% if not plans %}
+  <div class="empty-cta">
+    <span class="empty-cta-icon"><svg class="icon"><use href="#icon-lesson-plan"/></svg></span>
+    <h3>No lesson plans for {{ teacher.name.split()[0] }} yet</h3>
+    <p>Upload the first with the form above. Coach comments and version history attach automatically.</p>
+  </div>
+{% else %}
+<section class="card" style="padding: 0; overflow: hidden;">
+<table class="obs-table row-list">
+  <thead>
+    <tr>
+      <th>Title</th>
+      <th>Covers</th>
+      <th>Version</th>
+      <th>Status</th>
+      <th>Updated</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for p in plans %}
+    <tr>
+      <td><a href="/lesson-plans/{{ p.id }}" class="row-title">{{ p.title }}</a></td>
+      <td class="muted small">
+        {% if p.plan_start_date %}{{ p.plan_start_date }}{% endif %}
+        {% if p.plan_end_date %} – {{ p.plan_end_date }}{% endif %}
+      </td>
+      <td>v{{ p.current_version }}</td>
+      <td><span class="pill pill-{{ p.status }}">{{ p.status|replace('_', ' ') }}</span></td>
+      <td class="muted small">{{ p.updated_at[:10] if p.updated_at else p.created_at[:10] }}</td>
+      <td><a class="button-link" href="/lesson-plans/{{ p.id }}">Open →</a></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</section>
+{% endif %}
+
+{% endblock %}

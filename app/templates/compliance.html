@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block title %}Compliance report · Classroom Observer{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h1><svg class="icon icon-lg"><use href="#icon-check"/></svg>Compliance report</h1>
+    <p class="muted">Observation counts per teacher · academic year {{ academic_year }}</p>
+  </div>
+  <div class="page-header-meta">
+    <span class="count-chip">{{ totals.teachers }} teacher{{ 's' if totals.teachers != 1 }}</span>
+  </div>
+</div>
+
+{# ---- Filters + export ---- #}
+<section class="card compliance-controls">
+  <form method="get" action="/compliance" class="compliance-form">
+    <label>Academic year
+      <input type="text" name="year" value="{{ academic_year }}" pattern="\d{4}-\d{4}" size="10">
+    </label>
+    <label>Required per teacher
+      <input type="number" name="target" value="{{ target }}" min="1" max="20">
+    </label>
+    <button type="submit">Update</button>
+  </form>
+  <a class="button-link" href="/compliance/export.csv?year={{ academic_year }}&target={{ target }}">
+    <svg class="icon icon-sm"><use href="#icon-arrow-right"/></svg>
+    Download CSV
+  </a>
+</section>
+
+{# ---- Topline ---- #}
+<section class="stat-strip">
+  <div class="stat-card">
+    <div class="stat-label"><svg class="icon"><use href="#icon-check"/></svg>On track</div>
+    <div class="stat-value">{{ totals.on_track }}</div>
+    <div class="stat-sub">≥ {{ target }} observations</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label"><svg class="icon"><use href="#icon-clock"/></svg>At risk</div>
+    <div class="stat-value">{{ totals.at_risk }}</div>
+    <div class="stat-sub">under target, but observed</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label"><svg class="icon"><use href="#icon-alert"/></svg>Behind</div>
+    <div class="stat-value">{{ totals.behind }}</div>
+    <div class="stat-sub">zero observations, on roster ≥ 21 days</div>
+  </div>
+  {% if totals.na %}
+  <div class="stat-card">
+    <div class="stat-label"><svg class="icon"><use href="#icon-clock"/></svg>N/A</div>
+    <div class="stat-value">{{ totals.na }}</div>
+    <div class="stat-sub">too new to expect observations yet</div>
+  </div>
+  {% endif %}
+  <div class="stat-card">
+    <div class="stat-label"><svg class="icon"><use href="#icon-observations"/></svg>Total this year</div>
+    <div class="stat-value">{{ totals.observations }}</div>
+  </div>
+</section>
+
+{# ---- Per-teacher table ---- #}
+{% if rows %}
+<section class="card" style="padding: 0; overflow: hidden;">
+<table class="obs-table row-list compliance-table">
+  <thead>
+    <tr>
+      <th>Teacher</th>
+      <th>School</th>
+      <th>Coach</th>
+      <th>Observations</th>
+      <th>Target</th>
+      <th>Status</th>
+      <th>First observation</th>
+      <th>Most recent</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in rows %}
+    <tr class="compliance-row-{{ r.status }}">
+      <td><a href="/teachers/{{ r.id }}" class="row-title">{{ r.name }}</a></td>
+      <td class="muted small">{{ r.school }}</td>
+      <td class="muted small">{{ r.coach }}</td>
+      <td><strong>{{ r.obs_count }}</strong></td>
+      <td class="muted small">{{ r.target }}</td>
+      <td>
+        {% if r.status == 'on_track' %}
+          <span class="pill" style="background: #d7ecd8; color: #1c4d1e;">On track</span>
+        {% elif r.status == 'at_risk' %}
+          <span class="pill pill-impl-partial">At risk</span>
+        {% elif r.status == 'n/a' %}
+          <span class="pill pill-impl-not_observed" title="Added to roster on {{ r.created_at }} — not enough runway yet to expect observations.">N/A · new</span>
+        {% else %}
+          <span class="pill pill-impl-regressed">Behind</span>
+        {% endif %}
+      </td>
+      <td class="muted small">{{ r.first_at or '—' }}</td>
+      <td class="muted small">{{ r.last_at or '—' }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</section>
+{% else %}
+<div class="empty-cta">
+  <span class="empty-cta-icon"><svg class="icon"><use href="#icon-teachers"/></svg></span>
+  <h3>No teachers on record</h3>
+</div>
+{% endif %}
+
+<div class="muted small" style="margin-top: 16px;">
+  <strong>Method:</strong> counts observations with status <em>complete</em> where the observation date
+  (observed_at, else scored_at, else uploaded_at) falls between August 1 of the start year and July 31 of the end year.
+  CSV export mirrors this table for handoff to district reporting templates.
+</div>
+
+{% endblock %}

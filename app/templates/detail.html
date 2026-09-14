@@ -1,0 +1,734 @@
+{% extends "base.html" %}
+{% block title %}{{ obs.teacher }} · Observation · Classroom Observer{% endblock %}
+{% block content %}
+
+{% set _avatar_palette = ['blue', 'teal', 'amber', 'plum', 'green', 'rose'] %}
+{% set _avatar_class = _avatar_palette[avatar_idx % 6] %}
+
+<p class="crumbs"><a href="/teachers/{{ obs.teacher_id }}">← {{ obs.teacher }}</a></p>
+
+{% set _viewer_role = current_role(request) %}
+{% if _viewer_role == 'teacher' %}
+<div class="teacher-view-banner">
+  <span class="banner-label">You're on the coach's page for this observation.</span>
+  <a class="button-link secondary" href="/teachers/{{ obs.teacher_id }}/teacher-view">
+    <svg class="icon icon-sm"><use href="#icon-arrow-right"/></svg>Go to your view
+  </a>
+</div>
+{% endif %}
+
+{# ---- Mode tabs: Review (drafting) vs. Debrief (with teacher). Coach only. ---- #}
+{% if _viewer_role != 'teacher' %}
+<nav class="mode-tabs" aria-label="View mode">
+  <a href="?mode=review" class="mode-tab {{ 'active' if mode == 'review' }}">
+    <svg class="icon icon-sm"><use href="#icon-sparkle"/></svg>
+    <div>
+      <div class="mode-tab-title">Review</div>
+      <div class="mode-tab-sub">Read AI, draft your move</div>
+    </div>
+  </a>
+  <a href="?mode=debrief" class="mode-tab {{ 'active' if mode == 'debrief' }}">
+    <svg class="icon icon-sm"><use href="#icon-teachers"/></svg>
+    <div>
+      <div class="mode-tab-title">Debrief</div>
+      <div class="mode-tab-sub">Tell the story with {{ obs.teacher.split()[0] }}</div>
+    </div>
+  </a>
+</nav>
+{% endif %}
+
+{% if mirror_sketch and not hlm_response %}
+<div class="teacher-view-banner">
+  <span class="banner-label">Sketch: coach's mirror — how this page changes when the teacher responds</span>
+  <a class="button-link secondary" href="/observations/{{ obs.id }}">Return to today's view →</a>
+</div>
+{% elif not hlm_response %}
+<div class="mirror-preview-link">
+  <a href="?mirror=on">
+    <svg class="icon icon-sm"><use href="#icon-sparkle"/></svg>
+    Preview: what does this page look like once {{ obs.teacher.split()[0] }} has responded? →
+  </a>
+</div>
+{% endif %}
+{# ---- Any REAL response makes the mirror content live ---- #}
+{% set show_mirror = mirror_sketch or hlm_response %}
+
+{# ---- Hero card: avatar + video meta + status ---- #}
+<section class="teacher-hero">
+  <span class="avatar avatar-lg avatar-{{ _avatar_class }}">
+    {{ (obs.teacher[:1] | upper) }}
+  </span>
+  <div class="teacher-hero-body">
+    <h1><a href="/teachers/{{ obs.teacher_id }}" class="obs-hero-name">{{ obs.teacher }}</a></h1>
+    <p class="teacher-hero-summary">
+      <svg class="icon icon-sm"><use href="#icon-video"/></svg>
+      <span class="mono">{{ obs.video_filename }}</span>
+      · {{ obs.duration }} · {{ obs.rubric_name }}
+    </p>
+    <p class="muted small" style="margin: 4px 0 0;">
+      Uploaded {{ obs.uploaded_at }}
+      {% if obs.scored_at != '—' %} · Scored {{ obs.scored_at }}{% endif %}
+    </p>
+  </div>
+  <div class="teacher-hero-actions" style="align-items: flex-end;">
+    <span class="badge badge-{{ obs.status }}" id="status-badge" style="font-size: 13px; padding: 4px 12px;">{{ obs.status }}</span>
+  </div>
+</section>
+
+{% if obs.failure_reason %}
+<div class="banner banner-error">
+  <strong>Failed:</strong> {{ obs.failure_reason }}
+</div>
+{% endif %}
+
+{% if obs.status in ('pending', 'transcribing', 'scoring') %}
+<div class="banner banner-info" id="progress-banner">
+  <strong>Processing…</strong> This page auto-refreshes when the job completes.
+  <div class="muted small">
+    Current phase: <span id="status-text">{{ obs.status }}</span>.
+    Transcription runs first (~3 min per 20-min video on medium),
+    then Claude scoring (~2 min).
+  </div>
+</div>
+<script>
+  const targetTerminalStates = new Set(["complete", "failed"]);
+  async function poll() {
+    try {
+      const r = await fetch("/observations/{{ obs.id }}/status", {cache: "no-store"});
+      if (!r.ok) return;
+      const data = await r.json();
+      const badge = document.getElementById("status-badge");
+      const text = document.getElementById("status-text");
+      if (badge) badge.textContent = data.status;
+      if (text) text.textContent = data.status;
+      if (targetTerminalStates.has(data.status)) window.location.reload();
+    } catch (e) { /* try again next tick */ }
+  }
+  setInterval(poll, 4000);
+</script>
+{% endif %}
+
+{% if mode == 'debrief' and actions_available %}
+<div class="debrief-assess-first">
+  <div class="debrief-assess-first-header">
+    <svg class="icon icon-lg"><use href="#icon-action"/></svg>
+    <div>
+      <div class="debrief-assess-first-title">Assess these first</div>
+      <div class="debrief-assess-first-sub">
+        {{ obs.teacher.split()[0] }} had {{ actions_available|length }} prior action{{ 's' if actions_available|length != 1 }} still awaiting your read.
+        Assess them before you re-review the lesson — they set the baseline for what you just watched.
+      </div>
+    </div>
+  </div>
+  <ol class="debrief-assess-first-list">
+    {% for a in actions_available %}
+    <li>
+      <strong>{{ a.core_teacher_skill }}</strong>
+      <span class="muted small">· {{ a.related_domain }} · issued {{ a.created_at[:10] }}</span>
+      <p class="muted small" style="margin: 4px 0 0;">"{{ a.bite_sized_action_text[:120] }}{{ '…' if a.bite_sized_action_text|length > 120 }}"</p>
+      {% if a.teacher_account %}
+      <div class="muted small" style="margin-top: 4px;">
+        <svg class="icon icon-sm"><use href="#icon-teachers"/></svg>
+        {{ obs.teacher.split()[0] }} wrote: "{{ a.teacher_account[:120] }}{{ '…' if a.teacher_account|length > 120 }}"
+      </div>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ol>
+  <a class="button-link" href="#actions" onclick="document.querySelectorAll('details.deep-dive').forEach(d => d.open = true);">
+    Jump to assessment
+  </a>
+</div>
+{% endif %}
+
+{% if mode == 'debrief' %}
+<div class="narrative-step">
+  <span class="narrative-step-num">1</span>
+  <div>
+    <div class="narrative-step-title">What we observed</div>
+    <div class="narrative-step-sub muted small">Evidence from today's lesson — the rubric read + observed moments.</div>
+  </div>
+</div>
+{% endif %}
+
+{# ---- Domain rating strip. For teacher viewers, hide behind a disclosure. ---- #}
+{% if ratings %}
+{% if _viewer_role == 'teacher' %}
+<details class="teacher-ratings-disclosure">
+  <summary class="muted small">
+    <svg class="icon icon-sm"><use href="#icon-goal"/></svg>
+    See the rubric read from this observation
+  </summary>
+  <p class="muted small" style="margin-top: 8px;">Ratings are one lens on your practice — not the whole story. Use them to spot patterns, not to judge a single lesson.</p>
+  <div class="score-strip" style="margin-top: 8px;">
+    {% for domain, rating in ratings.items() %}
+    <div class="score-pill rating-{{ rating|replace(' ', '-')|lower }}">
+      <span class="score-domain">{{ domain }}</span>
+      <span class="score-rating">{{ rating }}</span>
+    </div>
+    {% endfor %}
+  </div>
+</details>
+{% else %}
+<div class="score-strip">
+  {% for domain, rating in ratings.items() %}
+  <div class="score-pill rating-{{ rating|replace(' ', '-')|lower }}">
+    <span class="score-domain">{{ domain }}</span>
+    <span class="score-rating">{{ rating }}</span>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+{% endif %}
+
+{% if mode == 'debrief' and (actions_assessed or actions_available) %}
+<div class="narrative-step">
+  <span class="narrative-step-num">2</span>
+  <div>
+    <div class="narrative-step-title">What {{ obs.teacher.split()[0] }} was working on coming in</div>
+    <div class="narrative-step-sub muted small">The bite-sized action{{ 's' if (actions_assessed|length + actions_available|length) != 1 }} from prior observation{{ 's' if (actions_assessed|length + actions_available|length) != 1 }} — the bridge from last time to this.</div>
+  </div>
+</div>
+
+<section class="card debrief-bridge">
+  {% for a in actions_assessed %}
+  <div class="debrief-bridge-item">
+    <div class="debrief-bridge-label">
+      <span class="pill pill-impl-{{ a.implementation }}">{{ a.implementation|replace('_', ' ') }}</span>
+      <strong>{{ a.core_teacher_skill }}</strong>
+      <span class="muted small">· {{ a.related_domain }}</span>
+    </div>
+    <p><em>Action:</em> {{ a.bite_sized_action_text }}</p>
+    {% if a.evidence_notes %}<p><em>Coach evidence:</em> {{ a.evidence_notes }}</p>{% endif %}
+    {% if a.teacher_account %}
+    <div class="tv-teacher-account">
+      <div class="tv-teacher-account-label">
+        <svg class="icon icon-sm"><use href="#icon-teachers"/></svg>
+        {{ obs.teacher.split()[0] }}'s account
+      </div>
+      <p>{{ a.teacher_account }}</p>
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+  {% for a in actions_available %}
+  <div class="debrief-bridge-item">
+    <div class="debrief-bridge-label">
+      <span class="pill pill-impl-pending">awaiting</span>
+      <strong>{{ a.core_teacher_skill }}</strong>
+      <span class="muted small">· {{ a.related_domain }} · issued {{ a.created_at[:10] }}</span>
+    </div>
+    <p><em>Action:</em> {{ a.bite_sized_action_text }}</p>
+    {% if a.teacher_account %}
+    <div class="tv-teacher-account">
+      <div class="tv-teacher-account-label">
+        <svg class="icon icon-sm"><use href="#icon-teachers"/></svg>
+        {{ obs.teacher.split()[0] }}'s account
+      </div>
+      <p>{{ a.teacher_account }}</p>
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</section>
+{% endif %}
+
+{% if mode == 'debrief' %}
+<div class="narrative-step">
+  <span class="narrative-step-num">3</span>
+  <div>
+    <div class="narrative-step-title">Where you two go next</div>
+    <div class="narrative-step-sub muted small">Your debrief focus + the move you're publishing to {{ obs.teacher.split()[0] }} + their response (if async).</div>
+  </div>
+</div>
+{% endif %}
+
+{# ---- Debrief focus + Highest-leverage move spotlight (side-by-side when both present) ---- #}
+{% if obs.debrief_focus or obs.debrief_focus_gbf_id or highest_leverage_move or coach_move %}
+<section class="obs-spotlight-row {{ 'three-col' if show_mirror }}">
+  {# Coach's debrief focus #}
+  <div class="obs-spotlight {{ 'obs-spotlight-empty' if not (obs.debrief_focus or obs.debrief_focus_gbf_id) else 'obs-spotlight-coach' }}" id="debrief-focus">
+    <div class="obs-spotlight-label">
+      <svg class="icon icon-sm"><use href="#icon-check"/></svg>
+      Coach's debrief focus
+    </div>
+    {% if obs.debrief_focus or obs.debrief_focus_gbf_id %}
+      {% set step = gbf_by_id.get(obs.debrief_focus_gbf_id) if obs.debrief_focus_gbf_id else None %}
+      {% if step %}
+        <div class="obs-spotlight-sub">GBF · {{ step.phase_label }} · {{ step.trajectory|capitalize }}</div>
+        <h3>{{ step.name }}</h3>
+        <div class="muted small">{{ step.headline }}</div>
+      {% endif %}
+      {% if obs.debrief_focus %}
+        <p class="obs-spotlight-body">{{ obs.debrief_focus }}</p>
+      {% endif %}
+    {% else %}
+      <h3>Name your debrief focus</h3>
+      <div class="muted small">Distinct from the AI's move — this is what you'll practice with the teacher.</div>
+    {% endif %}
+    <details class="add-form">
+      <summary>{% if obs.debrief_focus or obs.debrief_focus_gbf_id %}Update{% else %}Add debrief focus{% endif %}</summary>
+      <form method="post" action="/observations/{{ obs.id }}/debrief-focus">
+        <label>Get Better Faster action step (optional but recommended)
+          <select name="debrief_focus_gbf_id">
+            <option value="">— (none / free-form) —</option>
+            {% for step in gbf_steps %}
+            <option value="{{ step.id }}" {{ 'selected' if obs.debrief_focus_gbf_id == step.id }}>
+              {{ step.phase_label }} · {{ step.trajectory|capitalize }} · {{ step.name }}
+            </option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>Move you'll practice (free text — specific, observable)
+          <textarea name="debrief_focus" rows="3"
+            placeholder="e.g. 'Practice a whole-class reset script: stop teaching, square up, deliver 3-word directions.'">{{ obs.debrief_focus or '' }}</textarea>
+        </label>
+        <button type="submit">Save debrief focus</button>
+      </form>
+    </details>
+  </div>
+
+  {# Coach's move to teacher (coach mediates AI — AI's raw read is coach-only reference) #}
+  {% if coach_move or highest_leverage_move %}
+  <div class="obs-spotlight obs-spotlight-ai">
+    <div class="obs-spotlight-label">
+      <svg class="icon icon-sm"><use href="#icon-check"/></svg>
+      {% if coach_move %}Your move to {{ obs.teacher.split()[0] }}{% else %}Draft your move to {{ obs.teacher.split()[0] }}{% endif %}
+    </div>
+    {% if attached_cycle_closed %}
+    <div class="stale-response-badge">
+      <svg class="icon icon-sm"><use href="#icon-alert"/></svg>
+      <div>This observation is attached to a <strong>closed</strong> coaching cycle — moves published here won't feed a live cycle's growth arc.</div>
+    </div>
+    {% endif %}
+    {% if coach_move %}
+      {% if coach_move.gbf_step_id and gbf_by_id.get(coach_move.gbf_step_id) %}
+        <div class="obs-spotlight-sub">GBF · {{ gbf_by_id[coach_move.gbf_step_id].name }}</div>
+      {% endif %}
+      <p class="obs-spotlight-body">{{ coach_move.move_text }}</p>
+      <div class="muted small">
+        Published {{ coach_move.published_at[:16] }}
+        {% if coach_move.edited_at %} · edited {{ coach_move.edited_at[:16] }}{% endif %}
+        {% if coach_move.derived_from_ai %} · started from AI's suggestion{% endif %}
+      </div>
+      <details style="margin-top: 10px;">
+        <summary class="muted small" style="cursor:pointer;">Edit or republish</summary>
+        <form method="post" action="/coach-moves/{{ coach_move.id }}/edit" style="margin-top: 10px;">
+          <textarea name="move_text" rows="4" style="width:100%; padding: 8px; border: 1px solid var(--border); border-radius: 4px; font-family: inherit; font-size: 14px;">{{ coach_move.move_text }}</textarea>
+          <input type="hidden" name="gbf_step_id" value="{{ coach_move.gbf_step_id or '' }}">
+          <button type="submit" style="margin-top: 6px;">Save edit (no new version)</button>
+        </form>
+        <form method="post" action="/observations/{{ obs.id }}/coach-move/publish" style="margin-top: 10px; border-top: 1px dashed var(--border); padding-top: 10px;">
+          <div class="muted small" style="margin-bottom: 6px;">Substantive change? Publish a NEW version — the teacher's response resets so they can react to it.</div>
+          <textarea name="move_text" rows="4" style="width:100%; padding: 8px; border: 1px solid var(--border); border-radius: 4px; font-family: inherit; font-size: 14px;" placeholder="e.g. after meeting with {{ obs.teacher.split()[0] }} in person, here's what we agreed on..."></textarea>
+          <button type="submit" style="margin-top: 6px;">Publish new version</button>
+        </form>
+      </details>
+    {% else %}
+      <p class="muted">Not yet published to {{ obs.teacher.split()[0] }}. Draft your move below — {{ obs.teacher.split()[0] }} will see it as coming from you.</p>
+      <form method="post" action="/observations/{{ obs.id }}/coach-move/publish" style="margin-top: 8px;">
+        <textarea name="move_text" rows="4" required
+                  style="width:100%; padding: 8px; border: 1px solid var(--border); border-radius: 4px; font-family: inherit; font-size: 14px;"
+                  placeholder="Write the move you want {{ obs.teacher.split()[0] }} to practice next..."
+        >{% if highest_leverage_move %}{{ highest_leverage_move.move }}{% endif %}</textarea>
+        {% if highest_leverage_move %}
+          <input type="hidden" name="derived_from_ai" value="1">
+          <input type="hidden" name="gbf_step_id" value="{{ highest_leverage_move.gbf_step_id or '' }}">
+          <div class="muted small" style="margin-top: 6px;">
+            Prefilled from the AI's suggestion. Edit before publishing — the teacher only sees what you publish, never the AI's raw text.
+          </div>
+        {% endif %}
+        <button type="submit" style="margin-top: 6px;">Publish to {{ obs.teacher.split()[0] }}</button>
+      </form>
+    {% endif %}
+    {% if highest_leverage_move and _viewer_role != 'teacher' %}
+      <details style="margin-top: 12px; border-top: 1px dashed var(--border); padding-top: 8px;">
+        <summary class="muted small" style="cursor: pointer;">
+          <svg class="icon icon-sm"><use href="#icon-sparkle"/></svg>
+          See AI's raw read (private — coach only)
+        </summary>
+        <div style="margin-top: 8px; padding: 10px 12px; background: var(--accent-tint); border-radius: 6px; font-size: 13px;">
+          {% if highest_leverage_move.gbf_step_name %}
+            <div class="obs-spotlight-sub" style="color: var(--accent-deep);">GBF · {{ highest_leverage_move.gbf_step_name }}</div>
+          {% endif %}
+          <p style="margin: 6px 0;">{{ highest_leverage_move.move }}</p>
+          {% if highest_leverage_move.contextual_factors %}
+            <div class="factors-chips" style="margin-top: 8px;">
+              {% for f in highest_leverage_move.contextual_factors[:4] %}
+                <span class="chip">{{ f[:80] }}{{ '…' if f|length > 80 }}</span>
+              {% endfor %}
+            </div>
+          {% endif %}
+        </div>
+      </details>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {# ---- Third column: teacher's response ---- #}
+  {% if hlm_response %}
+    {% set _resp_labels = {'resonates':'This resonates','adjust':'Wants to adjust','talk':'Wants to talk about it'} %}
+    {% set _resp_pill = {'resonates':'#d7ecd8','adjust':'#fef3c7','talk':'var(--accent-tint)'} %}
+    {% set _resp_pill_fg = {'resonates':'#1c4d1e','adjust':'#92400e','talk':'var(--accent-deep)'} %}
+    <div class="obs-spotlight obs-spotlight-teacher">
+      <div class="obs-spotlight-label">
+        <svg class="icon icon-sm"><use href="#icon-teachers"/></svg>
+        {{ obs.teacher.split()[0] }}'s response
+      </div>
+      <div class="obs-spotlight-sub">
+        <span class="pill" style="background: {{ _resp_pill[hlm_response.response_type] }}; color: {{ _resp_pill_fg[hlm_response.response_type] }};">
+          {{ _resp_labels[hlm_response.response_type] }}
+        </span>
+        <span class="muted small">responded {{ hlm_response.created_at[:16] }}</span>
+      </div>
+      {% if response_is_stale %}
+      <div class="stale-response-badge">
+        <svg class="icon icon-sm"><use href="#icon-alert"/></svg>
+        <strong>Response is to a prior version</strong> — {{ obs.teacher.split()[0] }} hasn't reacted to your update yet.
+      </div>
+      {% endif %}
+      {% if hlm_response.teacher_note %}
+        <p class="obs-spotlight-body">"{{ hlm_response.teacher_note }}"</p>
+      {% endif %}
+      {% if hlm_response.acknowledged_at %}
+        <div class="muted small" style="margin-top: 10px;">
+          <svg class="icon icon-sm"><use href="#icon-check"/></svg>
+          Acknowledged {{ hlm_response.acknowledged_at[:16] }}
+        </div>
+      {% elif hlm_response.response_type != 'resonates' %}
+        <form method="post" action="/observations/{{ obs.id }}/hlm-response/acknowledge" style="margin-top: 10px;">
+          <button type="submit">
+            <svg class="icon icon-sm"><use href="#icon-check"/></svg>
+            Acknowledge {{ obs.teacher.split()[0] }}'s response
+          </button>
+        </form>
+      {% endif %}
+    </div>
+  {% elif mirror_sketch %}
+  <div class="obs-spotlight obs-spotlight-teacher">
+    <div class="obs-spotlight-label">
+      <svg class="icon icon-sm"><use href="#icon-teachers"/></svg>
+      {{ obs.teacher.split()[0] }}'s response
+    </div>
+    <div class="obs-spotlight-sub">
+      <span class="pill" style="background: #fef3c7; color: #92400e;">wants to adjust</span>
+      <span class="muted small">responded 2 hours ago</span>
+    </div>
+    <p class="obs-spotlight-body">
+      "The prompt-card feels like it would break the flow when kids are on a roll.
+      What if I tried a single sentence-stem instead — 'Build on ___ said' — that I can
+      whisper as I circulate, rather than a whole card at the podium?"
+    </p>
+    <div class="factors-chips" style="margin-top: 10px;">
+      <span class="chip"><strong>Suggests:</strong> lighter-touch sentence-stem cue</span>
+      <span class="chip"><strong>Concern:</strong> flow disruption</span>
+    </div>
+    <div class="muted small" style="margin-top: 10px; border-top: 1px dashed var(--border); padding-top: 8px;">
+      Sketch example — no real response on file yet. When the teacher posts one via their view, this card fills in with their real words.
+    </div>
+  </div>
+  {% endif %}
+</section>
+{% endif %}
+
+{# ---- Video + Cycle attachment (side-by-side) ---- #}
+<section class="obs-media-row">
+  {% if video_url %}
+    <div class="video-card">
+      <h2><svg class="icon icon-sm"><use href="#icon-video"/></svg>Video</h2>
+      <video controls preload="metadata" playsinline>
+        <source src="{{ video_url }}">
+        Your browser doesn't support HTML5 video.
+      </video>
+    </div>
+  {% else %}
+    <div class="card muted small">
+      Video playback isn't available for this observation (imported baseline — video file lives outside the app).
+    </div>
+  {% endif %}
+
+  <div class="card cycle-attach">
+    <h2><svg class="icon icon-sm"><use href="#icon-cycle"/></svg>Coaching cycle</h2>
+    {% if current_cycle %}
+      <p>
+        Attached to
+        <a href="/cycles/{{ current_cycle.id }}"><strong>{{ current_cycle.notes.splitlines()[0] if current_cycle.notes else 'Coaching cycle' }}</strong></a>
+      </p>
+      <p class="muted small">
+        Opened {{ current_cycle.opened_at[:10] }}
+        {% if current_cycle.closed_at %} · <em>closed {{ current_cycle.closed_at[:10] }}</em>{% endif %}
+      </p>
+    {% else %}
+      <p class="muted small">Not attached to any cycle.</p>
+    {% endif %}
+    {% if teacher_cycles %}
+      <form method="post" action="/observations/{{ obs.id }}/attach-cycle" class="inline-form">
+        <label>Attach to
+          <select name="coaching_cycle_id">
+            <option value="">— none (standalone) —</option>
+            {% for c in teacher_cycles %}
+            <option value="{{ c.id }}" {{ 'selected' if current_cycle and current_cycle.id == c.id }}>
+              {{ c.notes.splitlines()[0] if c.notes else 'Cycle' }} · {{ c.opened_at[:10] }}{% if c.closed_at %} · closed{% endif %}
+            </option>
+            {% endfor %}
+          </select>
+        </label>
+        <button type="submit">Update</button>
+      </form>
+    {% else %}
+      <p class="muted small">No cycles for this teacher yet.
+        <a href="/teachers/{{ obs.teacher_id }}">Open one from teacher page.</a></p>
+    {% endif %}
+  </div>
+
+  <div class="card cycle-attach">
+    <h2><svg class="icon icon-sm"><use href="#icon-lesson-plan"/></svg>Lesson plan</h2>
+    {% if attached_lp %}
+      <p>
+        Covers
+        <a href="/lesson-plans/{{ attached_lp.id }}"><strong>{{ attached_lp.title }}</strong></a>
+        <span class="muted small">· v{{ attached_lp.current_version }}</span>
+      </p>
+      {% if attached_lp.plan_start_date %}
+      <p class="muted small">
+        {{ attached_lp.plan_start_date }}{% if attached_lp.plan_end_date and attached_lp.plan_end_date != attached_lp.plan_start_date %} – {{ attached_lp.plan_end_date }}{% endif %}
+      </p>
+      {% endif %}
+    {% else %}
+      <p class="muted small">Not linked to a lesson plan.</p>
+    {% endif %}
+    {% if teacher_plans %}
+      <form method="post" action="/observations/{{ obs.id }}/attach-lesson-plan" class="inline-form">
+        <label>Attach to
+          <select name="lesson_plan_id">
+            <option value="">— none —</option>
+            {% for p in teacher_plans %}
+            <option value="{{ p.id }}" {{ 'selected' if attached_lp and attached_lp.id == p.id }}>
+              {{ p.title }} · v{{ p.current_version }}{% if p.plan_start_date %} · {{ p.plan_start_date }}{% endif %} · {{ p.status|replace('_', ' ') }}
+            </option>
+            {% endfor %}
+          </select>
+        </label>
+        <button type="submit">Update</button>
+      </form>
+    {% else %}
+      <p class="muted small">No lesson plans on file for this teacher.
+        <a href="/teachers/{{ obs.teacher_id }}/lesson-plans">Upload one →</a></p>
+    {% endif %}
+  </div>
+</section>
+
+{# ---- Bite-sized action tracking (full detail — hidden in debrief; already in bridge above) ---- #}
+{% if actions_issued or actions_available or actions_assessed %}
+{% if mode == 'debrief' %}
+<details class="deep-dive" style="margin-top: 16px;">
+  <summary>
+    <svg class="icon"><use href="#icon-action"/></svg>
+    <span class="dd-title">Full action tracking (assess + evidence)</span>
+    <span class="dd-count muted small">({{ actions_assessed|length + actions_available|length + actions_issued|length }} total)</span>
+  </summary>
+  <div class="deep-dive-body">
+{% else %}
+<div class="section-title-row" id="actions">
+  <h2><svg class="icon"><use href="#icon-action"/></svg>Bite-sized action tracking</h2>
+</div>
+{% endif %}
+<section class="card">
+  <p class="muted small">
+    Every coaching recommendation issued in an observation is tracked. At the next observation
+    the coach (or the AI) records whether the action was implemented.
+  </p>
+
+  {% if actions_assessed %}
+  <h3 class="subhead">Assessed at this observation</h3>
+  {% for a in actions_assessed %}
+    <div class="action-card action-{{ a.implementation }}">
+      <div class="action-header">
+        <strong>{{ a.core_teacher_skill }}</strong>
+        <span class="pill pill-impl-{{ a.implementation }}">{{ a.implementation|replace('_', ' ') }}</span>
+      </div>
+      <div class="muted small">{{ a.related_domain }} · issued {{ a.created_at[:10] }} · assessed
+        {% if a.assessed_by_user_id %}by coach{% else %}by AI{% endif %}
+      </div>
+      <p><em>Original action:</em> {{ a.bite_sized_action_text }}</p>
+      {% if a.evidence_notes %}<p><em>Evidence:</em> {{ a.evidence_notes }}</p>{% endif %}
+
+      {% if a.teacher_account %}
+      <div class="tv-teacher-account">
+        <div class="tv-teacher-account-label">
+          <svg class="icon icon-sm"><use href="#icon-teachers"/></svg>
+          {{ obs.teacher.split()[0] }}'s account
+          {% if a.teacher_account_at %}<span class="muted small">· saved {{ a.teacher_account_at[:16] }}</span>{% endif %}
+        </div>
+        <p>{{ a.teacher_account }}</p>
+      </div>
+      {% elif mirror_sketch and loop.first %}
+      <div class="tv-teacher-account">
+        <div class="tv-teacher-account-label">
+          <svg class="icon icon-sm"><use href="#icon-teachers"/></svg>
+          {{ obs.teacher.split()[0] }}'s account
+        </div>
+        <p>
+          <em>Sketch example:</em> "I put the card up on Monday and Tuesday but forgot
+          Wednesday and Thursday. When I remembered on Friday I got 4 tallies — the
+          sticky-note tracking helped me count."
+        </p>
+        <div class="muted small">
+          Would appear here once {{ obs.teacher.split()[0] }} posts an account from their view.
+        </div>
+      </div>
+      {% endif %}
+
+      <details class="add-form">
+        <summary>Override / edit assessment</summary>
+        <form method="post" action="/observations/{{ obs.id }}/assess-action">
+          <input type="hidden" name="tracking_id" value="{{ a.id }}">
+          <label>Implementation
+            <select name="implementation">
+              {% for opt in ['full', 'partial', 'not_observed', 'regressed'] %}
+              <option value="{{ opt }}" {{ 'selected' if a.implementation == opt }}>{{ opt|replace('_', ' ') }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>Evidence notes
+            <textarea name="evidence_notes" rows="3">{{ a.evidence_notes or '' }}</textarea>
+          </label>
+          <button type="submit">Save override</button>
+        </form>
+      </details>
+    </div>
+  {% endfor %}
+  {% endif %}
+
+  {% if actions_available %}
+  <h3 class="subhead">Awaiting assessment</h3>
+  <p class="muted small">
+    Actions from prior observations, ready to be assessed against this one.
+  </p>
+  {% for a in actions_available %}
+    <div class="action-card action-pending">
+      <div class="action-header">
+        <strong>{{ a.core_teacher_skill }}</strong>
+        <span class="pill pill-impl-pending">awaiting</span>
+      </div>
+      <div class="muted small">{{ a.related_domain }} · issued {{ a.created_at[:10] }}</div>
+      <p><em>Action:</em> {{ a.bite_sized_action_text }}</p>
+      {% if a.teacher_account %}
+      <div class="tv-teacher-account">
+        <div class="tv-teacher-account-label">
+          <svg class="icon icon-sm"><use href="#icon-teachers"/></svg>
+          {{ obs.teacher.split()[0] }}'s account
+          {% if a.teacher_account_at %}<span class="muted small">· saved {{ a.teacher_account_at[:16] }}</span>{% endif %}
+        </div>
+        <p>{{ a.teacher_account }}</p>
+      </div>
+      {% endif %}
+      <form method="post" action="/observations/{{ obs.id }}/assess-action" class="assess-form">
+        <input type="hidden" name="tracking_id" value="{{ a.id }}">
+        <label>Implementation
+          <select name="implementation" required>
+            <option value="" disabled selected>—</option>
+            <option value="full">Full</option>
+            <option value="partial">Partial</option>
+            <option value="not_observed">Not observed</option>
+            <option value="regressed">Regressed</option>
+          </select>
+        </label>
+        <label>Evidence notes
+          <textarea name="evidence_notes" rows="2"
+            placeholder="Specific evidence from this observation (with [MM:SS] timestamps if possible)."></textarea>
+        </label>
+        <button type="submit">Record assessment</button>
+      </form>
+    </div>
+  {% endfor %}
+  {% endif %}
+
+  {% if actions_issued %}
+  <h3 class="subhead">Issued in this observation</h3>
+  <p class="muted small">
+    Actions this observation recommended. They'll appear as "awaiting assessment"
+    on the next observation for this teacher.
+  </p>
+  <ul class="issued-list">
+    {% for a in actions_issued %}
+    <li>
+      <strong>{{ a.core_teacher_skill }}</strong>
+      <span class="muted small">({{ a.related_domain }})</span>
+      <div class="muted">{{ a.bite_sized_action_text }}</div>
+      {# Unlinked-goal chip: action landed with no goal_id because either
+         no active goal exists on this domain, or 2+ did (ambiguous auto-link).
+         The coach picks — a bite-sized action without a goal tie floats free
+         and won't roll up in cycle impact. Coach-only surface. #}
+      {% if _viewer_role != 'teacher' and not a.goal_id %}
+      <details class="action-goal-picker" style="margin-top: 8px;">
+        <summary class="badge badge-pending" style="cursor: pointer;">
+          Not linked to a goal — click to attach
+        </summary>
+        <form method="post" action="/actions/{{ a.id }}/goal" style="margin-top: 6px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
+          <select name="goal_id" required>
+            <option value="">— pick an active goal —</option>
+            {% for g in teacher_active_goals %}
+            <option value="{{ g.id }}"
+              {% if g.related_rubric_domain == a.related_domain %} selected{% endif %}>
+              {{ g.title }}{% if g.related_rubric_domain %} · {{ g.related_rubric_domain }}{% endif %}
+            </option>
+            {% endfor %}
+          </select>
+          <button type="submit" class="button-link">Attach</button>
+        </form>
+        {% if not teacher_active_goals %}
+        <p class="muted small" style="margin-top: 4px;">
+          No active goals — open one on the teacher hub first, then attach.
+        </p>
+        {% endif %}
+      </details>
+      {% endif %}
+      {% if a.teacher_account %}
+      <div class="tv-teacher-account" style="margin-top: 8px;">
+        <div class="tv-teacher-account-label">
+          <svg class="icon icon-sm"><use href="#icon-teachers"/></svg>
+          {{ obs.teacher.split()[0] }}'s account
+          {% if a.teacher_account_at %}<span class="muted small">· saved {{ a.teacher_account_at[:16] }}</span>{% endif %}
+        </div>
+        <p>{{ a.teacher_account }}</p>
+      </div>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+{% if mode == 'debrief' %}
+  </div>
+</details>
+{% endif %}
+{% endif %}
+
+{# ---- Full report body. Hidden entirely for teacher viewers (coach-only content). ---- #}
+{% if report_html and _viewer_role != 'teacher' %}
+{% if mode == 'debrief' %}
+<details class="deep-dive" style="margin-top: 12px;">
+  <summary>
+    <svg class="icon"><use href="#icon-lesson-plan"/></svg>
+    <span class="dd-title">Full AI report (reference — coach only)</span>
+  </summary>
+  <div class="deep-dive-body">
+    <article class="report-body">
+      {{ report_html|safe }}
+    </article>
+  </div>
+</details>
+{% else %}
+<div class="section-title-row">
+  <h2><svg class="icon"><use href="#icon-lesson-plan"/></svg>Full report</h2>
+</div>
+<article class="report-body">
+  {{ report_html|safe }}
+</article>
+{% endif %}
+{% elif obs.status == 'complete' and _viewer_role != 'teacher' %}
+<p class="muted">No report on file for this observation.</p>
+{% endif %}
+
+{% endblock %}

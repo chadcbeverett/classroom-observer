@@ -1,0 +1,109 @@
+{
+  "domain_ratings": {
+    "Student Engagement": "Developing",
+    "Essential Content": "Minimally Effective",
+    "Academic Ownership": "Minimally Effective",
+    "Demonstration of Learning": "Minimally Effective"
+  },
+  "sub_descriptors": {
+    "Student Engagement": [
+      {
+        "descriptor": "Engagement",
+        "rating": "Minimally Effective"
+      },
+      {
+        "descriptor": "Expectations",
+        "rating": "Developing"
+      },
+      {
+        "descriptor": "Procedures",
+        "rating": "Developing"
+      }
+    ],
+    "Essential Content": [
+      {
+        "descriptor": "Content",
+        "rating": "Minimally Effective"
+      },
+      {
+        "descriptor": "Lesson Activities",
+        "rating": "Minimally Effective"
+      },
+      {
+        "descriptor": "Materials",
+        "rating": "Minimally Effective"
+      },
+      {
+        "descriptor": "Sequence",
+        "rating": "Developing"
+      }
+    ],
+    "Academic Ownership": [
+      {
+        "descriptor": "Cognitive Work",
+        "rating": "Minimally Effective"
+      },
+      {
+        "descriptor": "Discourse",
+        "rating": "Ineffective"
+      },
+      {
+        "descriptor": "Evidence",
+        "rating": "Minimally Effective"
+      },
+      {
+        "descriptor": "Perseverance",
+        "rating": "Minimally Effective"
+      }
+    ],
+    "Demonstration of Learning": [
+      {
+        "descriptor": "Checks for Understanding",
+        "rating": "Minimally Effective"
+      },
+      {
+        "descriptor": "Data Tracking",
+        "rating": "Minimally Effective"
+      },
+      {
+        "descriptor": "Opportunity",
+        "rating": "Minimally Effective"
+      },
+      {
+        "descriptor": "Practice",
+        "rating": "Minimally Effective"
+      },
+      {
+        "descriptor": "Student Understanding",
+        "rating": "Minimally Effective"
+      }
+    ]
+  },
+  "core_teacher_skills_per_domain": {
+    "Student Engagement": [
+      "Addressing all negative and off-task student behavior immediately and in a way that does not slow or disrupt lesson momentum",
+      "Providing specific, concrete, sequential, and observable directions for behavior and academics",
+      "Using efficient routines and procedures"
+    ],
+    "Essential Content": [
+      "Developing and/or using a variety of appropriately demanding instructional materials and activities, such as texts, questions, problems, exercises and assessments",
+      "Developing and/or using daily lesson activities that are well sequenced, aligned to key points and move students toward mastery of grade-level standards",
+      "Using student data to develop and clearly communicate a well-framed, standards-aligned and appropriately rigorous objective to describe the goal(s) of the lesson"
+    ],
+    "Academic Ownership": [
+      "Promoting student persistence to get correct, defended responses",
+      "Providing opportunities for students to respond to and build on their peers' ideas",
+      "Requiring that students use complete sentences, correct grammar and academic language",
+      "Structuring and delivering lesson activities so that students do an appropriate amount of the thinking required by the lesson"
+    ],
+    "Demonstration of Learning": [
+      "Adjusting instruction in the moment to address student misunderstanding and using assessments to adjustment instruction as needed",
+      "Developing and/or using informal and formal assessments that yield useable data on students' progress toward grade-level standards",
+      "Planning for and accurately checking whether students understand the key content needed to master the lesson at key moments in the lesson (e.g. during direct instruction, before independent practice, at a transition and with an exit ticket at the end of a lesson)"
+    ]
+  },
+  "priority_skills": [
+    "Planning for and accurately checking whether students understand the key content needed to master the lesson at key moments in the lesson (e.g. during direct instruction, before independent practice, at a transition and with an exit ticket at the end of a lesson)",
+    "Providing opportunities for students to respond to and build on their peers' ideas"
+  ]
+}

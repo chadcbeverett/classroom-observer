@@ -1,0 +1,110 @@
+{
+  "domain_ratings": {
+    "Student Engagement": "Developing",
+    "Essential Content": "Developing",
+    "Academic Ownership": "Minimally Effective",
+    "Demonstration of Learning": "Developing"
+  },
+  "sub_descriptors": {
+    "Student Engagement": [
+      {
+        "descriptor": "Engagement",
+        "rating": "Developing"
+      },
+      {
+        "descriptor": "Expectations",
+        "rating": "Developing"
+      },
+      {
+        "descriptor": "Procedures",
+        "rating": "Developing"
+      }
+    ],
+    "Essential Content": [
+      {
+        "descriptor": "Content",
+        "rating": "Developing"
+      },
+      {
+        "descriptor": "Lesson Activities",
+        "rating": "Developing"
+      },
+      {
+        "descriptor": "Materials",
+        "rating": "Developing"
+      },
+      {
+        "descriptor": "Sequence",
+        "rating": "Developing"
+      }
+    ],
+    "Academic Ownership": [
+      {
+        "descriptor": "Cognitive Work",
+        "rating": "Minimally Effective"
+      },
+      {
+        "descriptor": "Discourse",
+        "rating": "Minimally Effective"
+      },
+      {
+        "descriptor": "Evidence",
+        "rating": "Minimally Effective"
+      },
+      {
+        "descriptor": "Perseverance",
+        "rating": "Developing"
+      }
+    ],
+    "Demonstration of Learning": [
+      {
+        "descriptor": "Checks for Understanding",
+        "rating": "Developing"
+      },
+      {
+        "descriptor": "Data Tracking",
+        "rating": "Minimally Effective"
+      },
+      {
+        "descriptor": "Opportunity",
+        "rating": "Minimally Effective"
+      },
+      {
+        "descriptor": "Practice",
+        "rating": "Developing"
+      },
+      {
+        "descriptor": "Student Understanding",
+        "rating": "Developing"
+      }
+    ]
+  },
+  "core_teacher_skills_per_domain": {
+    "Student Engagement": [
+      "Addressing all negative and off-task student behavior immediately and in a way that does not slow or disrupt lesson momentum",
+      "Providing specific, concrete, sequential, and observable directions for behavior and academics",
+      "Using efficient routines and procedures"
+    ],
+    "Essential Content": [
+      "Developing and/or using daily lesson activities that are well sequenced, aligned to key points and move students toward mastery of grade-level standards",
+      "Planning for and providing work for students to 'say yes to' and using strategies to maintain a quick pace throughout the lesson",
+      "Using student data to develop and clearly communicate a well-framed, standards-aligned and appropriately rigorous objective to describe the goal(s) of the lesson"
+    ],
+    "Academic Ownership": [
+      "Posing questions or providing lesson activities that require students to cite evidence to support their thinking",
+      "Providing opportunities for students to respond to and build on their peers' ideas",
+      "Requiring that students use complete sentences, correct grammar and academic language",
+      "Structuring and delivering lesson activities so that students do an appropriate amount of the thinking required by the lesson"
+    ],
+    "Demonstration of Learning": [
+      "Adjusting instruction in the moment to address student misunderstanding and using assessments to adjustment instruction as needed",
+      "Developing and/or using informal and formal assessments that yield useable data on students' progress toward grade-level standards",
+      "Planning for and accurately checking whether students understand the key content needed to master the lesson at key moments in the lesson (e.g. during direct instruction, before independent practice, at a transition and with an exit ticket at the end of a lesson)",
+      "Providing feedback that affirms correctly understood content and student progress toward the lesson objective, and clarifies misunderstood content"
+    ]
+  },
+  "priority_skills": [
+    "Planning for and accurately checking whether students understand the key content needed to master the lesson at key moments in the lesson (e.g. during direct instruction, before independent practice, at a transition and with an exit ticket at the end of a lesson)",
+    "Posing questions or providing lesson activities that require students to cite evidence to support their thinking"
+  ]
+}

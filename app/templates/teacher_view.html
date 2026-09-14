@@ -1,0 +1,439 @@
+{% extends "base.html" %}
+{% block title %}{{ teacher.first }} · Your growth arc{% endblock %}
+{% block content %}
+
+{% set _avatar_class = avatar_palette[avatar_idx(teacher.name)] %}
+
+<div class="teacher-view-banner">
+  <span class="banner-label">You're viewing as {{ teacher.first }}</span>
+  <form method="post" action="/whoami/switch" style="display:inline;">
+    <input type="hidden" name="role" value="coach">
+    <input type="hidden" name="redirect_to" value="/teachers/{{ teacher.id }}">
+    <button type="submit" class="button-link secondary" style="border:1px solid var(--border);cursor:pointer;">
+      <svg class="icon"><use href="#icon-arrow-right"/></svg>Back to coach view
+    </button>
+  </form>
+</div>
+
+{# ---- Hero: reset the frame ---- #}
+<section class="teacher-hero teacher-hero-personal">
+  <span class="avatar avatar-lg avatar-{{ _avatar_class }}">{{ (teacher.name[:1] | upper) }}</span>
+  <div class="teacher-hero-body">
+    <h1>{{ greeting }}, {{ teacher.first }}.</h1>
+    <p class="teacher-hero-summary">
+      {% if active_cycle and cycle_prog %}
+        You're in <strong>week {{ cycle_prog.week_current }} of {{ cycle_prog.week_total }}</strong>
+        of the {{ (active_cycle.notes.splitlines()[0] if active_cycle.notes else 'current cycle')|lower }}.
+      {% elif active_cycle %}
+        You're in an active coaching cycle.
+      {% else %}
+        No cycle in flight right now.
+      {% endif %}
+    </p>
+  </div>
+</section>
+
+{# ---- Current cycle spotlight ---- #}
+{% if active_cycle %}
+<section class="tv-cycle">
+  <div class="tv-cycle-header">
+    <div class="obs-spotlight-label" style="color: var(--accent-deep);">
+      <svg class="icon icon-sm"><use href="#icon-cycle"/></svg>
+      This cycle
+    </div>
+    <h2>{{ active_cycle.notes.splitlines()[0] if active_cycle.notes else 'Coaching cycle' }}</h2>
+  </div>
+  {% if cycle_prog %}
+  <div class="tv-cycle-progress">
+    <div class="cycle-progress-bar" style="height: 8px;">
+      <div class="cycle-progress-fill" style="width: {{ (cycle_prog.week_current / cycle_prog.week_total * 100)|round(1) }}%"></div>
+    </div>
+    <div class="muted small">
+      Week {{ cycle_prog.week_current }} of {{ cycle_prog.week_total }}
+      {% if cycle_prog.days_remaining >= 0 %}
+        · {{ cycle_prog.days_remaining }} day{{ 's' if cycle_prog.days_remaining != 1 }} to go
+      {% else %}
+        · {{ -cycle_prog.days_remaining }} day{{ 's' if cycle_prog.days_remaining != -1 }} past close
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% if active_goals %}
+    {% for g in active_goals[:1] %}
+    <div class="tv-cycle-goal">
+      <div class="tv-cycle-goal-label">Where you're growing</div>
+      <div class="tv-cycle-goal-title">{{ g.title }}</div>
+      {% if g.description %}<p class="muted">{{ g.description }}</p>{% endif %}
+
+      {# Bridges' ending — from the goal's `releasing` field #}
+      {% if g.releasing %}
+      <div class="tv-letgo">
+        <div class="tv-letgo-label">
+          <svg class="icon icon-sm"><use href="#icon-arrow-right"/></svg>
+          What you're setting aside
+        </div>
+        <p>{{ g.releasing }}</p>
+      </div>
+      {% else %}
+      <div class="tv-letgo" style="opacity: 0.75;">
+        <div class="tv-letgo-label">
+          <svg class="icon icon-sm"><use href="#icon-arrow-right"/></svg>
+          What you're setting aside
+        </div>
+        <p class="muted small">Not named yet. Naming the old habit you're moving away from is part of the change — ask your coach to write this at the next debrief.</p>
+      </div>
+      {% endif %}
+
+      {% if g.success_indicators %}
+      <div class="tv-signals">
+        <div class="tv-signals-label">Signals we're looking for</div>
+        <ul>{% for s in g.success_indicators %}<li>{{ s }}</li>{% endfor %}</ul>
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  {% endif %}
+</section>
+{% endif %}
+
+{# ---- Current bite-sized action (teacher's view) ---- #}
+{% if current_action %}
+<div class="section-title-row">
+  <h2><svg class="icon"><use href="#icon-action"/></svg>What you're trying this week</h2>
+</div>
+<section class="obs-spotlight obs-spotlight-coach" style="max-width:none;">
+  <div class="obs-spotlight-label">
+    <svg class="icon icon-sm"><use href="#icon-check"/></svg>
+    {{ current_action.core_teacher_skill }}
+  </div>
+  <p class="obs-spotlight-body">{{ current_action.bite_sized_action_text }}</p>
+
+  {% if current_action.implementation %}
+    <div class="tv-action-result">
+      <span class="pill pill-impl-{{ current_action.implementation }}">
+        Coach assessed: {{ current_action.implementation|replace('_', ' ') }}
+      </span>
+      {% if current_action.evidence_notes %}
+        <p class="muted small">{{ current_action.evidence_notes }}</p>
+      {% endif %}
+    </div>
+  {% else %}
+    <div class="muted small">Not yet assessed — we'll look together at your next visit.</div>
+  {% endif %}
+
+  <form method="post" action="/actions/{{ current_action.id }}/teacher-account" class="tv-response-slot">
+    <label for="teacher-account-{{ current_action.id }}">How do <em>you</em> see it?</label>
+    <textarea id="teacher-account-{{ current_action.id }}" name="teacher_account" rows="3"
+              placeholder="Your own account of trying this. What worked, what got in the way, what surprised you.">{{ current_action.teacher_account or '' }}</textarea>
+    <button type="submit">Save your account</button>
+    {% if current_action.teacher_account_at %}
+      <div class="muted small">Last saved {{ current_action.teacher_account_at[:16] }}.</div>
+    {% endif %}
+  </form>
+</section>
+{% endif %}
+
+{# ---- Practice log — micro-attempts between observations ---- #}
+<div class="section-title-row" id="practice-log">
+  <h2><svg class="icon"><use href="#icon-action"/></svg>Practice log — moments between visits</h2>
+</div>
+<section class="card">
+  <p class="muted small">
+    Quick notes on trying the move. One or two sentences is plenty. Comes back
+    to your coach as material for your next debrief — what worked, what didn't,
+    what you noticed.
+  </p>
+  {% if practice_log %}
+    {% set _cycle_group = namespace(last=None) %}
+    <ul class="practice-log-list">
+      {% for e in practice_log %}
+      {% set _title = e.cycle_title or 'Not attached to a cycle' %}
+      {% if _title != _cycle_group.last %}
+        <li class="practice-log-divider">{{ _title }}{% if e.cycle_closed_at %} <span class="muted small">· closed</span>{% endif %}</li>
+        {% set _cycle_group.last = _title %}
+      {% endif %}
+      <li class="practice-log-item practice-log-{{ e.created_by_role }}">
+        <div class="practice-log-head">
+          <span class="pill" style="background: {% if e.created_by_role == 'teacher' %}var(--warm-bg); color: var(--warm-strong){% else %}var(--accent-tint); color: var(--accent-deep){% endif %};">
+            {{ 'you' if e.created_by_role == 'teacher' else e.created_by_role }}
+          </span>
+          <span class="muted small">{{ e.created_at[:16] }}</span>
+          {% if e.action_skill %}
+          <span class="muted small">· on <em>{{ e.action_skill }}</em></span>
+          {% endif %}
+        </div>
+        <div>{{ e.entry_text }}</div>
+      </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="muted">Nothing logged yet — try one now.</p>
+  {% endif %}
+  <details class="add-form" open>
+    <summary>+ Add an entry</summary>
+    <form method="post" action="/teachers/{{ teacher.id }}/practice-log">
+      {% if current_action %}
+      <input type="hidden" name="action_id" value="{{ current_action.id }}">
+      <div class="muted small" style="margin-bottom: 6px;">
+        Tied to your current action: <em>{{ current_action.core_teacher_skill }}</em>
+      </div>
+      {% endif %}
+      <label>What happened when you tried?
+        <textarea name="entry_text" rows="3" required placeholder="e.g. 'Tried the sentence-stem in period 3 — got two clean student-to-student exchanges without me stepping in.'"></textarea>
+      </label>
+      <button type="submit">Save entry</button>
+    </form>
+  </details>
+</section>
+
+{# ---- Coach's move for the teacher — the coach's published version ---- #}
+{% if current_move and latest_obs %}
+<div class="section-title-row">
+  <h2><svg class="icon"><use href="#icon-sparkle"/></svg>Your coach's next move</h2>
+</div>
+<section class="obs-spotlight obs-spotlight-ai" style="max-width:none;">
+  <div class="obs-spotlight-label">
+    Based on your coach's read of the last observation.
+  </div>
+  <p class="obs-spotlight-body">{{ current_move.move_text }}</p>
+  <div class="muted small">Published {{ current_move.published_at[:16] }}{% if current_move.edited_at %} · updated {{ current_move.edited_at[:16] }}{% endif %}</div>
+
+  {% if response_is_stale_for_teacher %}
+    <div class="stale-response-badge" style="margin-top: 12px;">
+      <svg class="icon icon-sm"><use href="#icon-alert"/></svg>
+      <div>
+        <strong>Your coach updated the move since you responded.</strong>
+        Take another look — your prior response was to an earlier version.
+      </div>
+    </div>
+  {% endif %}
+  {% if existing_hlm_response %}
+    <div class="tv-hlm-existing">
+      <span class="pill {{ {'resonates':'pill-impl-full','adjust':'pill-impl-partial','talk':'pill-active'}[existing_hlm_response.response_type] }}">
+        You chose: {{ {'resonates':'This resonates','adjust':'I want to adjust','talk':'Talk about it'}[existing_hlm_response.response_type] }}
+      </span>
+      <span class="muted small">saved {{ existing_hlm_response.created_at[:16] }}</span>
+      {% if existing_hlm_response.teacher_note %}
+        <p style="margin-top:8px;">"{{ existing_hlm_response.teacher_note }}"</p>
+      {% endif %}
+      {% if existing_hlm_response.acknowledged_at %}
+        <div class="muted small">Coach acknowledged {{ existing_hlm_response.acknowledged_at[:16] }}.</div>
+      {% else %}
+        <div class="muted small">Waiting on your coach to acknowledge.</div>
+      {% endif %}
+      <details style="margin-top:8px;">
+        <summary class="muted small">Change my response</summary>
+        <form method="post" action="/observations/{{ latest_obs.id }}/hlm-response" class="tv-negotiate-form" style="margin-top:10px;">
+          <div class="tv-negotiate">
+            <button type="submit" name="response_type" value="resonates" class="tv-accept">This resonates</button>
+            <button type="submit" name="response_type" value="adjust" class="tv-adjust">I want to adjust</button>
+            <button type="submit" name="response_type" value="talk" class="tv-talk">Talk about it</button>
+          </div>
+          <label>Optional note (what you'd change or want to discuss):
+            <textarea name="teacher_note" rows="2" placeholder="e.g. 'The prompt-card would break the flow — what if I tried a sentence-stem instead?'"></textarea>
+          </label>
+        </form>
+      </details>
+    </div>
+  {% else %}
+    <form method="post" action="/observations/{{ latest_obs.id }}/hlm-response" class="tv-negotiate-form">
+      <div class="tv-negotiate">
+        <button type="submit" name="response_type" value="resonates" class="tv-accept">This resonates</button>
+        <button type="submit" name="response_type" value="adjust" class="tv-adjust">I want to adjust</button>
+        <button type="submit" name="response_type" value="talk" class="tv-talk">Talk about it</button>
+      </div>
+      <label>Optional note (what you'd change or want to discuss):
+        <textarea name="teacher_note" rows="2" placeholder="e.g. 'The prompt-card would break the flow — what if I tried a sentence-stem instead?'"></textarea>
+      </label>
+    </form>
+  {% endif %}
+</section>
+{% endif %}
+
+{# ---- Continuity: awaiting coach's next move, showing the prior one ---- #}
+{% if awaiting_coach and continuity_move %}
+<div class="section-title-row">
+  <h2><svg class="icon"><use href="#icon-sparkle"/></svg>What you're currently working on</h2>
+</div>
+<section class="obs-spotlight obs-spotlight-coach" style="max-width:none;">
+  <div class="obs-spotlight-label">
+    <svg class="icon icon-sm"><use href="#icon-clock"/></svg>
+    Your coach is preparing feedback from the recent observation
+  </div>
+  <p class="obs-spotlight-body">{{ continuity_move.move_text }}</p>
+  <div class="muted small">Published {{ continuity_move.published_at[:16] }} — this stays your current focus until your coach publishes the next one.</div>
+</section>
+{% elif awaiting_coach %}
+<div class="section-title-row">
+  <h2><svg class="icon"><use href="#icon-sparkle"/></svg>Your next move</h2>
+</div>
+<div class="empty-cta compact">
+  <span class="empty-cta-icon"><svg class="icon"><use href="#icon-clock"/></svg></span>
+  <h3>Your coach is preparing feedback</h3>
+  <p>Your last observation is being reviewed. Check back in a day or two.</p>
+</div>
+{% endif %}
+
+{# ---- Reference zone divider ---- #}
+<div class="deep-dive-divider">
+  <div class="deep-dive-title">
+    <svg class="icon icon-sm"><use href="#icon-lesson-plan"/></svg>
+    More about you — expand for detail
+  </div>
+  <nav class="jump-to-strip" aria-label="Jump to reference section">
+    <a href="#growing">How you're growing</a>
+    <a href="#voice">Your voice</a>
+    <a href="#observations">Your observations</a>
+    <a href="#plans">Your plans</a>
+  </nav>
+</div>
+
+{# ---- DEEP DIVE: How you're growing (narrative-first) ---- #}
+<details id="growing" class="deep-dive">
+  <summary>
+    <svg class="icon"><use href="#icon-trend-up"/></svg>
+    <span class="dd-title">How you're growing</span>
+  </summary>
+  <div class="deep-dive-body">
+    {% if profile.skill_development_narrative %}
+    <section class="card narrative-card">
+      <div class="narrative-body">{{ profile.skill_development_narrative }}</div>
+      <div class="muted small" style="margin-top:12px;">— written by your coach · updated as the coaching relationship evolves</div>
+    </section>
+    {% else %}
+    <div class="empty-cta compact">
+      <span class="empty-cta-icon"><svg class="icon"><use href="#icon-sparkle"/></svg></span>
+      <h3>Your growth story isn't written yet</h3>
+      <p>Your coach hasn't yet drafted the running narrative of what you're working to master. Ask them to start one at your next debrief.</p>
+    </div>
+    {% endif %}
+
+{% if movement %}
+<section class="card">
+  <details>
+    <summary class="tv-disclosure">
+      <svg class="icon icon-sm"><use href="#icon-goal"/></svg>
+      See the rubric read across your observations
+      <span class="muted small">({{ movement|length }} observation{{ 's' if movement|length != 1 }})</span>
+    </summary>
+    <p class="muted small" style="margin-top:12px;">Rubric ratings are one lens on your practice — not the whole story. They help spot patterns over time.</p>
+    <table class="obs-table small">
+      <thead>
+        <tr>
+          <th>Date</th>
+          {% for d in domains %}<th title="{{ d }}">{{ d.split(' ')[0][:3]|upper }}</th>{% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for m in movement %}
+        <tr>
+          <td class="muted small">{{ m.scored_at[:10] if m.scored_at else '—' }}</td>
+          {% for d in domains %}
+            {% set r = m.ratings.get(d) %}
+            <td>
+              {% if r %}<span class="rating rating-{{ r|replace(' ', '-')|lower }}">{{ r[:3]|upper }}</span>{% else %}—{% endif %}
+            </td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </details>
+</section>
+{% endif %}
+  </div>
+</details>
+
+{# ---- DEEP DIVE: Your voice ---- #}
+<details id="voice" class="deep-dive">
+  <summary>
+    <svg class="icon"><use href="#icon-teachers"/></svg>
+    <span class="dd-title">Your voice</span>
+  </summary>
+  <div class="deep-dive-body">
+<section class="card">
+  {% if profile.years_teaching_total is not none or profile.coaching_style_preference %}
+    <ul class="kv">
+      {% if profile.years_teaching_total is not none %}<li><span>Years teaching</span> <strong>{{ profile.years_teaching_total }}</strong></li>{% endif %}
+      {% if profile.coaching_style_preference %}<li><span>Coaching style you prefer</span> <strong>{{ profile.coaching_style_preference }}</strong></li>{% endif %}
+      {% if profile.career_goals_notes %}<li><span>What you're working toward</span> <strong style="text-align:right;max-width:60%;">{{ profile.career_goals_notes }}</strong></li>{% endif %}
+    </ul>
+  {% else %}
+    <p class="muted">You haven't filled in your side yet — your coach's suggestions will fit you better once they know what you prefer, what you've done, and where you want to grow.</p>
+  {% endif %}
+  <a class="button-link" href="/teachers/{{ teacher.id }}/profile/teacher">
+    <svg class="icon icon-sm"><use href="#icon-arrow-right"/></svg>
+    {% if profile.years_teaching_total is not none %}Update your profile{% else %}Fill in your side{% endif %}
+  </a>
+</section>
+
+  </div>
+</details>
+
+{# ---- DEEP DIVE: Your observations ---- #}
+{% if observations %}
+<details id="observations" class="deep-dive">
+  <summary>
+    <svg class="icon"><use href="#icon-observations"/></svg>
+    <span class="dd-title">Your observations</span>
+    <span class="dd-count muted small">({{ observations|length }})</span>
+  </summary>
+  <div class="deep-dive-body">
+<section class="card">
+  <ul class="tv-simple-list">
+    {% for o in observations %}
+    <li>
+      <a href="/observations/{{ o.id }}"><strong>{{ o.video_filename }}</strong></a>
+      <span class="muted small">{{ o.uploaded_at[:10] if o.uploaded_at else '' }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+  </div>
+</details>
+{% endif %}
+
+{% if lesson_plans %}
+<details id="plans" class="deep-dive">
+  <summary>
+    <svg class="icon"><use href="#icon-lesson-plan"/></svg>
+    <span class="dd-title">Your lesson plans</span>
+    <span class="dd-count muted small">({{ lesson_plans|length }})</span>
+  </summary>
+  <div class="deep-dive-body">
+<section class="card">
+  <ul class="tv-simple-list">
+    {% for p in lesson_plans %}
+    <li>
+      <a href="/lesson-plans/{{ p.id }}"><strong>{{ p.title }}</strong></a>
+      <span class="pill pill-{{ p.status }}">{{ p.status|replace('_', ' ') }}</span>
+      <span class="muted small">v{{ p.current_version }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+  </div>
+</details>
+{% endif %}
+
+<script>
+  function openTargetDetails() {
+    const hash = window.location.hash;
+    if (!hash) return;
+    try {
+      const el = document.querySelector(hash);
+      if (!el) return;
+      let node = el;
+      while (node) {
+        if (node.tagName === 'DETAILS') node.open = true;
+        node = node.parentElement;
+      }
+      setTimeout(() => el.scrollIntoView({behavior: 'smooth', block: 'start'}), 50);
+    } catch (e) {}
+  }
+  window.addEventListener('hashchange', openTargetDetails);
+  openTargetDetails();
+</script>
+
+{% endblock %}

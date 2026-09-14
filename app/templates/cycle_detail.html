@@ -1,0 +1,414 @@
+{% extends "base.html" %}
+{% block title %}Cycle · {{ teacher.name }} · Classroom Observer{% endblock %}
+{% block content %}
+
+{% set _avatar_palette = ['blue', 'teal', 'amber', 'plum', 'green', 'rose'] %}
+{% set _avatar_class = _avatar_palette[avatar_idx % 6] %}
+{% set title = cycle.notes.splitlines()[0] if cycle.notes else 'Coaching cycle' %}
+{% set prog = cycle_progress(cycle) %}
+
+<p class="crumbs"><a href="/teachers/{{ teacher.id }}">← {{ teacher.name }}</a></p>
+
+{# ---- Hero card: cycle title + teacher avatar + active/closed pill ---- #}
+<section class="teacher-hero">
+  <a href="/teachers/{{ teacher.id }}" class="avatar avatar-lg avatar-{{ _avatar_class }}" style="text-decoration:none;">
+    {{ (teacher.name[:1] | upper) }}
+  </a>
+  <div class="teacher-hero-body">
+    <div class="obs-spotlight-label" style="color: var(--accent-deep);">
+      <svg class="icon icon-sm"><use href="#icon-cycle"/></svg>
+      Coaching cycle
+    </div>
+    <h1>{{ title }}</h1>
+    <p class="teacher-hero-summary">
+      <a href="/teachers/{{ teacher.id }}" class="obs-hero-name">{{ teacher.name }}</a>
+      · opened {{ cycle.opened_at[:10] }}
+      {% if cycle.expected_close_date and is_active %} · expected close {{ cycle.expected_close_date }}{% endif %}
+      {% if cycle.closed_at %} · closed {{ cycle.closed_at[:10] }}{% endif %}
+    </p>
+  </div>
+  <div class="teacher-hero-actions" style="align-items: flex-end;">
+    <span class="pill pill-{{ 'active' if is_active else 'closed_met' }}"
+          style="font-size: 12px; padding: 3px 10px;">
+      {{ 'active' if is_active else 'closed' }}
+    </span>
+    <a class="button-link secondary" href="/cycles/{{ cycle.id }}/print" target="_blank">
+      <svg class="icon"><use href="#icon-lesson-plan"/></svg>Print / PDF
+    </a>
+  </div>
+</section>
+
+{# ---- Progress + KPIs ---- #}
+{% if not is_active %}
+<section class="growth-story-card">
+  <div class="obs-spotlight-label" style="color: var(--accent-deep);">
+    <svg class="icon icon-sm"><use href="#icon-sparkle"/></svg>
+    Growth story
+  </div>
+  {% if cycle.growth_story %}
+  <div class="growth-story-body">{{ cycle.growth_story }}</div>
+  <div class="muted small" style="margin-top: 10px;">— Coach's narrative of what changed over the arc</div>
+  <details style="margin-top: 12px;">
+    <summary class="muted small" style="cursor: pointer;">Edit</summary>
+    <form method="post" action="/cycles/{{ cycle.id }}/growth-story" style="margin-top: 8px;">
+      <textarea name="growth_story" rows="8" style="width:100%; padding: 8px; border: 1px solid var(--border); border-radius: 4px; font-family: inherit; font-size: 14px; line-height: 1.6;">{{ cycle.growth_story }}</textarea>
+      <button type="submit" style="margin-top: 6px;">Save changes</button>
+    </form>
+  </details>
+  {% else %}
+  <p class="muted">The growth story isn't written yet. Reflections often land days after the close — capture it while it's fresh.</p>
+  <details style="margin-top: 8px;" open>
+    <summary style="cursor: pointer; color: var(--accent); font-weight: 600;">+ Write the growth story now</summary>
+    <form method="post" action="/cycles/{{ cycle.id }}/growth-story" style="margin-top: 8px;">
+      <textarea name="growth_story" rows="6" style="width:100%; padding: 8px; border: 1px solid var(--border); border-radius: 4px; font-family: inherit; font-size: 14px; line-height: 1.6;" placeholder="What changed for {{ teacher.name.split()[0] }}? What surprised you? What carries forward?"></textarea>
+      <button type="submit" style="margin-top: 6px;">Save growth story</button>
+    </form>
+  </details>
+  {% endif %}
+</section>
+{% endif %}
+
+<section class="cycle-hero-row">
+  {# Progress spotlight #}
+  <div class="cycle-progress-card {{ 'overdue' if prog and prog.days_remaining < 0 }} {{ 'closed' if not is_active }}">
+    {% if is_active and prog %}
+      <div class="obs-spotlight-label" style="color: var(--accent-deep);">
+        <svg class="icon icon-sm"><use href="#icon-clock"/></svg>
+        Cycle progress
+      </div>
+      <div class="cycle-week-big">
+        Week <strong>{{ prog.week_current }}</strong>
+        <span class="muted">of {{ prog.week_total }}</span>
+      </div>
+      <div class="cycle-progress-bar" style="height: 12px;">
+        <div class="cycle-progress-fill" style="width: {{ (prog.week_current / prog.week_total * 100)|round(1) }}%"></div>
+      </div>
+      <div class="cycle-progress-days">
+        {% if prog.days_remaining >= 0 %}
+          <strong>{{ prog.days_remaining }}</strong> day{{ 's' if prog.days_remaining != 1 }} remaining
+        {% else %}
+          <strong>{{ -prog.days_remaining }}</strong> day{{ 's' if prog.days_remaining != -1 }} overdue
+        {% endif %}
+      </div>
+      {% if cycle.expected_close_date %}
+        <details class="add-form" style="margin-top: 10px; padding-top: 8px;">
+          <summary>Adjust close date</summary>
+          <form method="post" action="/cycles/{{ cycle.id }}/update-close-date" class="inline-form">
+            <label>New expected close
+              <input type="date" name="expected_close_date"
+                     value="{{ cycle.expected_close_date or '' }}" required>
+            </label>
+            <button type="submit">Update</button>
+          </form>
+        </details>
+      {% endif %}
+    {% elif not is_active %}
+      <div class="obs-spotlight-label" style="color: #4a4a4a;">
+        <svg class="icon icon-sm"><use href="#icon-check"/></svg>
+        Cycle closed
+      </div>
+      <div class="cycle-week-big">
+        Closed <span class="muted">{{ cycle.closed_at[:10] }}</span>
+      </div>
+      {% if cycle.expected_close_date %}
+        <div class="cycle-progress-days">Opened {{ cycle.opened_at[:10] }} · Expected {{ cycle.expected_close_date }}</div>
+      {% endif %}
+    {% else %}
+      <div class="cycle-progress-days">
+        No expected close date set.
+      </div>
+    {% endif %}
+  </div>
+
+  {# Implementation rate KPI #}
+  {% if action_stats.implementation_rate_pct is not none %}
+    {% set kpi_class = 'hero-kpi' %}
+    {% if action_stats.implementation_rate_pct >= 60 %}{% set kpi_class = 'hero-kpi cool' %}
+    {% elif action_stats.implementation_rate_pct < 40 %}{% set kpi_class = 'hero-kpi warm' %}
+    {% endif %}
+  {% else %}
+    {% set kpi_class = 'hero-kpi dim' %}
+  {% endif %}
+  <div class="{{ kpi_class }}">
+    <div class="kpi-label">
+      <svg class="icon icon-sm"><use href="#icon-action"/></svg>
+      Cycle implementation
+    </div>
+    <div>
+      <div class="kpi-value {{ 'small' if action_stats.implementation_rate_pct is none }}">
+        {% if action_stats.implementation_rate_pct is not none %}{{ action_stats.implementation_rate_pct }}%
+        {% else %}—{% endif %}
+      </div>
+      <div class="kpi-sub">
+        {% if action_stats.total_assessed %}
+          {{ action_stats.total_assessed }} of {{ action_stats.total_issued }} actions assessed
+          {% if action_stats.awaiting %}<br>{{ action_stats.awaiting }} awaiting{% endif %}
+        {% elif action_stats.total_issued %}
+          {{ action_stats.total_issued }} action{{ 's' if action_stats.total_issued != 1 }} issued, none assessed
+        {% else %}
+          No actions in this cycle yet
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  {# Rating movement KPI (average delta across targeted domains) #}
+  {% set deltas = [] %}
+  {% for row in impact %}
+    {% if row.delta is not none %}{% set _ = deltas.append(row.delta) %}{% endif %}
+  {% endfor %}
+  {% set avg_delta = ((deltas | sum) / (deltas | length)) if deltas else none %}
+  {% if avg_delta is not none %}
+    {% set gkpi = 'hero-kpi cool' if avg_delta > 0 else ('hero-kpi warm' if avg_delta < 0 else 'hero-kpi dim') %}
+  {% else %}
+    {% set gkpi = 'hero-kpi dim' %}
+  {% endif %}
+  <div class="{{ gkpi }}">
+    <div class="kpi-label">
+      <svg class="icon icon-sm"><use href="#icon-trend-up"/></svg>
+      Growth on targeted domains
+    </div>
+    <div>
+      <div class="kpi-value {{ 'small' if avg_delta is none }}">
+        {% if avg_delta is not none %}
+          {% if avg_delta > 0 %}+{% endif %}{{ '%.1f'|format(avg_delta) }}
+        {% else %}—{% endif %}
+      </div>
+      <div class="kpi-sub">
+        {% if avg_delta is not none %}
+          Avg rubric-score change across {{ deltas|length }} targeted domain{{ 's' if deltas|length != 1 }}
+        {% elif impact %}
+          Need ≥2 observations per targeted domain to compute
+        {% else %}
+          Add a goal with a rubric domain to track this
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</section>
+
+{# ---- Goals in this cycle ---- #}
+<div class="section-title-row">
+  <h2><svg class="icon"><use href="#icon-goal"/></svg>Goals in this cycle</h2>
+</div>
+{% if goals %}
+<div class="goal-grid">
+  {% for g in goals %}
+  <div class="goal-card">
+    <div class="goal-header">
+      <strong>{{ g.title }}</strong>
+      <span class="pill pill-{{ g.status }}">{{ g.status|replace('_', ' ') }}</span>
+    </div>
+    {% if g.description %}<p>{{ g.description }}</p>{% endif %}
+    {% if g.releasing %}
+    <div class="goal-releasing">
+      <div class="goal-releasing-label">
+        <svg class="icon icon-sm"><use href="#icon-arrow-right"/></svg>
+        Setting aside
+      </div>
+      <p>{{ g.releasing }}</p>
+    </div>
+    {% endif %}
+    {% if g.related_rubric_domain %}
+    <div class="muted small">Targets: <strong>{{ g.related_rubric_domain }}</strong>{% if g.related_core_teacher_skill %} — {{ g.related_core_teacher_skill }}{% endif %}</div>
+    {% endif %}
+    {% if g.success_indicators %}
+    <div class="muted small">Success indicators:</div>
+    <ul>{% for s in g.success_indicators %}<li>{{ s }}</li>{% endfor %}</ul>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty-cta compact">
+  <span class="empty-cta-icon"><svg class="icon"><use href="#icon-goal"/></svg></span>
+  <h3>This cycle is ready for a goal to anchor it</h3>
+  <p>Propose one with {{ teacher.name.split()[0] }} and attach it here — the goal is what the growth KPI measures.</p>
+  <a class="button-link" href="/teachers/{{ teacher.id }}">
+    <svg class="icon icon-sm"><use href="#icon-arrow-right"/></svg>Open {{ teacher.name.split()[0] }}'s page
+  </a>
+</div>
+{% endif %}
+
+{# ---- Observations in this cycle ---- #}
+<div class="section-title-row">
+  <h2><svg class="icon"><use href="#icon-observations"/></svg>Observations in this cycle</h2>
+</div>
+<section class="card">
+  {% if observations %}
+  <table class="obs-table">
+    <thead>
+      <tr>
+        <th>Video</th>
+        <th>Uploaded</th>
+        <th>Status</th>
+        <th>Ratings</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for o in observations %}
+      <tr>
+        <td class="mono truncate">{{ o.video_filename }}</td>
+        <td class="muted small">{{ o.uploaded_at[:10] if o.uploaded_at else '—' }}</td>
+        <td><span class="badge badge-{{ o.status }}">{{ o.status }}</span></td>
+        <td class="ratings-cell">
+          {% for domain, rating in o.ratings.items() %}
+            <span class="rating rating-{{ rating|replace(' ', '-')|lower }}" title="{{ domain }}">{{ rating[:3]|upper }}</span>
+          {% endfor %}
+        </td>
+        <td><a class="button-link" href="/observations/{{ o.id }}">Open →</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <div class="empty-cta compact">
+      <span class="empty-cta-icon"><svg class="icon"><use href="#icon-observations"/></svg></span>
+      <h3>Ready for an observation to fill this cycle in</h3>
+      <p>Open any observation for {{ teacher.name.split()[0] }} and attach it from its detail page — that's what makes the growth arc visible over time.</p>
+      <a class="button-link" href="/teachers/{{ teacher.id }}">
+        <svg class="icon icon-sm"><use href="#icon-arrow-right"/></svg>See {{ teacher.name.split()[0] }}'s observations
+      </a>
+    </div>
+  {% endif %}
+</section>
+
+{# ---- Rating movement on targeted domains ---- #}
+{% if impact %}
+<div class="section-title-row">
+  <h2><svg class="icon"><use href="#icon-trend-up"/></svg>Rating movement on targeted domains</h2>
+</div>
+<section class="card">
+  {% for row in impact %}
+  <div class="impact-row">
+    <h4>
+      {{ row.domain }}
+      {% if row.delta is not none %}
+        {% if row.delta > 0 %}
+          <span class="trend trend-up">+{{ row.delta }}</span>
+        {% elif row.delta < 0 %}
+          <span class="trend trend-down">{{ row.delta }}</span>
+        {% else %}
+          <span class="trend trend-flat">·</span>
+        {% endif %}
+        <span class="muted small">(across {{ row.n_observations }} observations)</span>
+      {% endif %}
+    </h4>
+    <ol class="impact-trail">
+      {% for ts, rating in row.trail %}
+      <li>
+        <span class="muted small">{{ ts[:10] }}</span>
+        <span class="rating rating-{{ rating|replace(' ', '-')|lower }}">{{ rating }}</span>
+      </li>
+      {% endfor %}
+    </ol>
+  </div>
+  {% endfor %}
+</section>
+{% endif %}
+
+{# ---- Action-status breakdown (compact grid) ---- #}
+{% if action_stats.total_assessed %}
+<div class="section-title-row">
+  <h2><svg class="icon"><use href="#icon-action"/></svg>Action assessment breakdown</h2>
+</div>
+<section class="card">
+  <div class="lp-status-grid">
+    {% for status in ['full', 'partial', 'not_observed', 'regressed'] %}
+      {% if action_stats.by_status[status] %}
+      <div class="lp-status-cell">
+        <span class="pill pill-impl-{{ status }}">{{ status|replace('_', ' ') }}</span>
+        <span class="lp-status-num">{{ action_stats.by_status[status] }}</span>
+      </div>
+      {% endif %}
+    {% endfor %}
+    {% if action_stats.awaiting %}
+      <div class="lp-status-cell">
+        <span class="pill">awaiting</span>
+        <span class="lp-status-num">{{ action_stats.awaiting }}</span>
+      </div>
+    {% endif %}
+  </div>
+</section>
+{% endif %}
+
+{# ---- Free-form notes (only if multi-line) ---- #}
+{% if cycle.notes and cycle.notes.splitlines()|length > 1 %}
+<section class="card">
+  <h2><svg class="icon icon-sm"><use href="#icon-lesson-plan"/></svg>Notes</h2>
+  <pre class="cycle-notes">{{ cycle.notes }}</pre>
+</section>
+{% endif %}
+
+{# ---- Close cycle ---- #}
+{% if is_active %}
+<section class="card">
+  <h2>Close this cycle</h2>
+  <p class="muted small">Closing captures a snapshot; observations and goals stay attached.</p>
+
+  {% if close_warn %}
+  {# Parse counts out of tags like "unassessed_actions:3" — the router
+     packs them into the query string as tag:N pairs so the template can
+     show a real number instead of a bare pronoun. #}
+  {% set _wparts = close_warn.split(',') %}
+  {% set _wmap = namespace(unassessed_actions=0, unacked_hlm=0, obs_no_move=0) %}
+  {% for _t in _wparts %}
+    {% if ':' in _t %}
+      {% set _k, _v = _t.split(':', 1) %}
+      {% if _k == 'unassessed_actions' %}{% set _wmap.unassessed_actions = _v|int %}{% endif %}
+      {% if _k == 'unacked_hlm' %}{% set _wmap.unacked_hlm = _v|int %}{% endif %}
+      {% if _k == 'obs_no_move' %}{% set _wmap.obs_no_move = _v|int %}{% endif %}
+    {% endif %}
+  {% endfor %}
+  <div class="cycle-close-warn">
+    <svg class="icon icon-lg"><use href="#icon-alert"/></svg>
+    <div>
+      <strong>Hold on — work in this cycle is unfinished.</strong>
+      <ul>
+        {% if 'no_obs' in close_warn %}
+        <li>No complete observations attached — cycle impact metrics will read as no data.</li>
+        {% endif %}
+        {% if 'no_goals' in close_warn %}
+        <li>No goals attached — growth on targeted domains can't be measured.</li>
+        {% endif %}
+        {% if 'open_goals' in close_warn %}
+        <li>Goals in this cycle are still open (proposed/active). Close each one first — met, partial, unmet — so the growth story is complete.</li>
+        {% endif %}
+        {% if _wmap.unassessed_actions %}
+        <li>{{ _wmap.unassessed_actions }} bite-sized action{{ 's' if _wmap.unassessed_actions != 1 else '' }} issued in this cycle {{ 'has' if _wmap.unassessed_actions == 1 else 'have' }} not been assessed. Mark implementation on each — full, partial, not observed — before closing.</li>
+        {% endif %}
+        {% if _wmap.unacked_hlm %}
+        <li>{{ _wmap.unacked_hlm }} teacher response{{ 's' if _wmap.unacked_hlm != 1 else '' }} to your coach move {{ 'is' if _wmap.unacked_hlm == 1 else 'are' }} unacknowledged (adjust / talk). Acknowledge on the observation page so the teacher sees you saw it.</li>
+        {% endif %}
+        {% if _wmap.obs_no_move %}
+        <li>{{ _wmap.obs_no_move }} observation{{ 's' if _wmap.obs_no_move != 1 else '' }} in this cycle {{ 'has' if _wmap.obs_no_move == 1 else 'have' }} no published coach move. The AI ran but you never mediated it — publish a move first, or acknowledge the gap.</li>
+        {% endif %}
+      </ul>
+      <p class="muted small">If you're closing on purpose (e.g. cancelled early, or you'll finish the work off-tool), check the box below and submit again.</p>
+    </div>
+  </div>
+  {% endif %}
+
+  <form method="post" action="/cycles/{{ cycle.id }}/close">
+    <input type="hidden" name="teacher_id" value="{{ teacher.id }}">
+    <label>Growth story — the story of this cycle
+      <textarea name="growth_story" rows="6"
+        placeholder="What changed for {{ teacher.name.split()[0] }} over the arc? What was the emotional shape — struggle, breakthrough, plateau? What surprised you? What carries forward? This shows up co-equal with the rubric-delta on the closed cycle page — worth writing well.">{{ cycle.growth_story or '' }}</textarea>
+    </label>
+    <label>Closing notes (short tags — optional)
+      <textarea name="closing_notes" rows="2"
+        placeholder="Terse markers for reports (e.g. 'discourse cycle · partial · carry forward peer-response')."></textarea>
+    </label>
+    {% if close_warn %}
+    <label class="goal-close-check goal-close-carry" style="margin-bottom:8px;">
+      <input type="checkbox" name="confirm_empty" value="1">
+      <span>Yes — close this empty cycle anyway (I understand the metrics will read as no data)</span>
+    </label>
+    {% endif %}
+    <button type="submit">Close cycle</button>
+  </form>
+</section>
+{% endif %}
+
+{% endblock %}

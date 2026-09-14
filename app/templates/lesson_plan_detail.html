@@ -1,0 +1,189 @@
+{% extends "base.html" %}
+{% block title %}{{ plan.title }} — {{ plan.teacher_name }}{% endblock %}
+{% block content %}
+
+{% set _avatar_palette = ['blue', 'teal', 'amber', 'plum', 'green', 'rose'] %}
+{% set _avatar_class = _avatar_palette[avatar_idx % 6] %}
+
+{% set _status_steps = [
+  ('submitted', 'Submitted'),
+  ('coach_reviewed', 'Coach reviewed'),
+  ('revision_requested', 'Revision requested'),
+  ('approved', 'Approved')
+] %}
+{% set _status_order = ['submitted', 'coach_reviewed', 'revision_requested', 'approved'] %}
+{% set _cur_idx = _status_order.index(plan.status) if plan.status in _status_order else -1 %}
+
+{% set _current_version = versions | selectattr('version_number', 'equalto', plan.current_version) | first %}
+
+<p class="crumbs"><a href="/teachers/{{ plan.teacher_id }}/lesson-plans">← {{ plan.teacher_name }}'s plans</a></p>
+
+{# ---- Hero card ---- #}
+<section class="teacher-hero">
+  <a href="/teachers/{{ plan.teacher_id }}" class="avatar avatar-lg avatar-{{ _avatar_class }}" style="text-decoration:none;">
+    {{ (plan.teacher_name[:1] | upper) if plan.teacher_name else '?' }}
+  </a>
+  <div class="teacher-hero-body">
+    <div class="obs-spotlight-label" style="color: var(--accent-deep);">
+      <svg class="icon icon-sm"><use href="#icon-lesson-plan"/></svg>
+      Lesson plan
+    </div>
+    <h1>{{ plan.title }}</h1>
+    <p class="teacher-hero-summary">
+      <a href="/teachers/{{ plan.teacher_id }}" class="obs-hero-name">{{ plan.teacher_name }}</a>
+      · v{{ plan.current_version }}
+      {% if plan.plan_start_date %}
+        · Covers {{ plan.plan_start_date }}{% if plan.plan_end_date %} – {{ plan.plan_end_date }}{% endif %}
+      {% endif %}
+    </p>
+  </div>
+  <div class="teacher-hero-actions" style="align-items: flex-end;">
+    <span class="pill pill-{{ plan.status }}" style="font-size: 12px; padding: 3px 10px;">
+      {{ plan.status|replace('_', ' ') }}
+    </span>
+    {% if plan.status == 'archived' %}
+      <span class="muted small">archived</span>
+    {% endif %}
+  </div>
+</section>
+
+{# ---- Spotlight row: current version + status stepper ---- #}
+<section class="obs-spotlight-row">
+  {# Current version #}
+  <div class="obs-spotlight obs-spotlight-ai">
+    <div class="obs-spotlight-label">
+      <svg class="icon icon-sm"><use href="#icon-lesson-plan"/></svg>
+      Current version — v{{ plan.current_version }}
+    </div>
+    {% if _current_version %}
+      <h3>{{ _current_version.original_filename }}</h3>
+      <div class="muted small">Uploaded {{ _current_version.created_at[:16] }}</div>
+      <p style="margin-top: 10px;">
+        <a class="button-link" href="/lesson-plans/{{ plan.id }}/file/v{{ _current_version.version_number }}">
+          <svg class="icon icon-sm"><use href="#icon-arrow-right"/></svg>
+          Download / open
+        </a>
+      </p>
+    {% else %}
+      <p class="muted">No version file on record.</p>
+    {% endif %}
+    <details class="add-form">
+      <summary>+ Upload revision (v{{ plan.current_version + 1 }})</summary>
+      <form method="post" action="/lesson-plans/{{ plan.id }}/versions" enctype="multipart/form-data">
+        <label>File
+          <input type="file" name="document" accept=".pdf,.docx,.doc" required>
+        </label>
+        <button type="submit">Upload revision</button>
+      </form>
+    </details>
+  </div>
+
+  {# Status stepper + status change #}
+  <div class="obs-spotlight obs-spotlight-coach">
+    <div class="obs-spotlight-label">
+      <svg class="icon icon-sm"><use href="#icon-check"/></svg>
+      Review status
+    </div>
+    <ol class="lp-status-stepper">
+      {% for slug, label in _status_steps %}
+        {% set idx = loop.index0 %}
+        {% set is_current = plan.status == slug %}
+        {% set is_past = _cur_idx >= 0 and idx < _cur_idx and slug != 'revision_requested' %}
+        <li class="lp-step {{ 'current' if is_current }} {{ 'past' if is_past }} {{ 'revision' if slug == 'revision_requested' }}">
+          <span class="lp-step-dot">
+            {% if is_current %}
+              <svg class="icon icon-sm"><use href="#icon-clock"/></svg>
+            {% elif is_past %}
+              <svg class="icon icon-sm"><use href="#icon-check"/></svg>
+            {% endif %}
+          </span>
+          <span class="lp-step-label">{{ label }}</span>
+        </li>
+      {% endfor %}
+    </ol>
+    <form method="post" action="/lesson-plans/{{ plan.id }}/status" class="inline-form" style="margin-top: 12px;">
+      <label>Change status
+        <select name="status">
+          {% for opt in ['submitted', 'coach_reviewed', 'revision_requested', 'approved', 'archived'] %}
+          <option value="{{ opt }}" {{ 'selected' if plan.status == opt }}>{{ opt|replace('_', ' ') }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <button type="submit">Update</button>
+    </form>
+  </div>
+</section>
+
+{# ---- Version history ---- #}
+<div class="section-title-row">
+  <h2><svg class="icon"><use href="#icon-cycle"/></svg>Version history</h2>
+</div>
+<section class="card">
+  <ol class="lp-version-list">
+    {% for v in versions %}
+    <li class="{{ 'current' if v.version_number == plan.current_version }}">
+      <div class="lp-version-badge">v{{ v.version_number }}</div>
+      <div class="lp-version-body">
+        <div>
+          <a href="/lesson-plans/{{ plan.id }}/file/v{{ v.version_number }}">{{ v.original_filename }}</a>
+          {% if v.version_number == plan.current_version %}
+            <span class="pill pill-active" style="margin-left: 6px;">current</span>
+          {% endif %}
+        </div>
+        <div class="muted small">Uploaded {{ v.created_at[:16] }}</div>
+      </div>
+    </li>
+    {% endfor %}
+  </ol>
+</section>
+
+{# ---- Comment thread ---- #}
+<div class="section-title-row" id="comments">
+  <h2><svg class="icon"><use href="#icon-observations"/></svg>Comments <span class="muted small" style="text-transform:none;letter-spacing:0;">({{ comments|length }})</span></h2>
+</div>
+<section class="card">
+  {% if comments %}
+    <div class="comment-thread">
+      {% for c in comments %}
+      <div class="comment comment-{{ c.author_role }}">
+        <div class="comment-header">
+          <span class="avatar comment-avatar avatar-{{ _avatar_palette[(c.author_name|length) % 6] }}">
+            {{ (c.author_name[:1] | upper) if c.author_name else '?' }}
+          </span>
+          <div style="flex: 1;">
+            <div>
+              <strong>{{ c.author_name }}</strong>
+              <span class="pill pill-role-{{ c.author_role }}">{{ c.author_role|replace('_', ' ') }}</span>
+            </div>
+            <div class="muted small">v{{ c.plan_version_number }} · {{ c.created_at[:16] }}</div>
+          </div>
+        </div>
+        <div class="comment-body">{{ c.body }}</div>
+      </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <p class="muted">No comments yet. Start the conversation below.</p>
+  {% endif %}
+
+  <details class="add-form" open>
+    <summary>+ Add a comment (on v{{ plan.current_version }})</summary>
+    <form method="post" action="/lesson-plans/{{ plan.id }}/comments">
+      <input type="hidden" name="plan_version_number" value="{{ plan.current_version }}">
+      <label>Speaking as
+        <select name="author_role">
+          <option value="coach">Coach</option>
+          <option value="teacher_self_serve">Teacher</option>
+          <option value="admin">Admin</option>
+        </select>
+      </label>
+      <label>Comment
+        <textarea name="body" rows="4" required
+                  placeholder="Feedback on the plan — questions, suggestions, or asks for revision."></textarea>
+      </label>
+      <button type="submit">Post comment</button>
+    </form>
+  </details>
+</section>
+
+{% endblock %}

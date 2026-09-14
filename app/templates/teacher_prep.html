@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% block title %}Prep · {{ teacher.name }} · Classroom Observer{% endblock %}
+{% block content %}
+
+{% set _avatar_palette = ['blue', 'teal', 'amber', 'plum', 'green', 'rose'] %}
+{% set _avatar_class = _avatar_palette[avatar_idx % 6] %}
+
+<p class="crumbs"><a href="/teachers/{{ teacher.id }}">← {{ teacher.name }}</a></p>
+
+{# ---- Hero: what you're walking into ---- #}
+<section class="teacher-hero prep-hero">
+  <span class="avatar avatar-lg avatar-{{ _avatar_class }}">{{ (teacher.name[:1] | upper) }}</span>
+  <div class="teacher-hero-body">
+    <div class="obs-spotlight-label" style="color: var(--accent-deep);">
+      <svg class="icon icon-sm"><use href="#icon-clock"/></svg>
+      Prep · 30-second glance
+    </div>
+    <h1>Entering {{ teacher.first }}'s classroom</h1>
+    <p class="teacher-hero-summary">
+      {% if active_cycle and cycle_prog %}
+        Week <strong>{{ cycle_prog.week_current }} of {{ cycle_prog.week_total }}</strong>
+        of the {{ (active_cycle.notes.splitlines()[0] if active_cycle.notes else 'current cycle')|lower }}
+        {% if cycle_prog.days_remaining >= 0 %} · {{ cycle_prog.days_remaining }} day{{ 's' if cycle_prog.days_remaining != 1 }} remaining{% endif %}
+      {% else %}
+        No active cycle in flight.
+      {% endif %}
+    </p>
+  </div>
+</section>
+
+<section class="prep-split">
+  {# ---- Left: what they're practicing ---- #}
+  <div class="prep-panel">
+    <h2 class="prep-panel-title">
+      <svg class="icon"><use href="#icon-action"/></svg>
+      What {{ teacher.first }} is practicing
+    </h2>
+
+    {% if current_move %}
+    <div class="prep-block prep-block-move">
+      <div class="prep-block-label">Your published move</div>
+      <p class="prep-block-body">{{ current_move.move_text }}</p>
+      <div class="muted small">Published {{ current_move.published_at[:16] }}</div>
+    </div>
+    {% endif %}
+
+    {% if current_action %}
+    <div class="prep-block prep-block-action">
+      <div class="prep-block-label">
+        Bite-sized action
+        {% if current_action.implementation %}
+          <span class="pill pill-impl-{{ current_action.implementation }}">{{ current_action.implementation|replace('_', ' ') }}</span>
+        {% else %}
+          <span class="pill">unassessed</span>
+        {% endif %}
+      </div>
+      <p class="prep-block-body">{{ current_action.bite_sized_action_text }}</p>
+      {% if current_action.teacher_account %}
+      <div class="prep-block-account">
+        <div class="prep-block-account-label">
+          <svg class="icon icon-sm"><use href="#icon-teachers"/></svg>
+          {{ teacher.first }}'s account
+        </div>
+        <p>{{ current_action.teacher_account }}</p>
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    {% if active_goal %}
+    <div class="prep-block prep-block-goal">
+      <div class="prep-block-label">Active goal</div>
+      <div class="prep-block-body"><strong>{{ active_goal.title }}</strong></div>
+      {% if active_goal.description %}<p class="muted small">{{ active_goal.description }}</p>{% endif %}
+      {% if active_goal.releasing %}
+      <div class="prep-releasing">
+        <div class="prep-releasing-label">Setting aside</div>
+        <p>{{ active_goal.releasing }}</p>
+      </div>
+      {% endif %}
+      {% if active_goal.success_indicators %}
+      <div class="muted small" style="margin-top: 6px;">Signals:</div>
+      <ul class="prep-signals">
+        {% for s in active_goal.success_indicators %}<li>{{ s }}</li>{% endfor %}
+      </ul>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    {% if not current_move and not current_action and not active_goal %}
+    <div class="empty-cta compact">
+      <span class="empty-cta-icon"><svg class="icon"><use href="#icon-goal"/></svg></span>
+      <h3>Nothing on the practice board yet</h3>
+      <p>Once {{ teacher.first }} has a goal and you've published a coaching move, they'll show here.</p>
+    </div>
+    {% endif %}
+  </div>
+
+  {# ---- Right: today's lesson plan ---- #}
+  <div class="prep-panel">
+    <h2 class="prep-panel-title">
+      <svg class="icon"><use href="#icon-lesson-plan"/></svg>
+      Lesson plan for today
+    </h2>
+
+    {% if not recent_plans %}
+    <div class="empty-cta compact">
+      <span class="empty-cta-icon"><svg class="icon"><use href="#icon-lesson-plan"/></svg></span>
+      <h3>No lesson plans on file</h3>
+      <p>{{ teacher.first }} hasn't uploaded a plan yet. Ask for one before the observation, or walk in unprimed.</p>
+      <a class="button-link" href="/teachers/{{ teacher.id }}/lesson-plans">
+        <svg class="icon icon-sm"><use href="#icon-arrow-right"/></svg>Open plans page
+      </a>
+    </div>
+    {% else %}
+    <p class="muted small">Recent plans on file — pick the one that matches today's lesson.</p>
+    <ul class="prep-plan-list">
+      {% for p in recent_plans %}
+      <li>
+        <a href="/lesson-plans/{{ p.id }}" class="prep-plan-link">
+          <div class="prep-plan-title">{{ p.title }}</div>
+          <div class="prep-plan-meta">
+            <span class="pill pill-{{ p.status }}">{{ p.status|replace('_', ' ') }}</span>
+            <span class="muted small">v{{ p.current_version }}</span>
+            {% if p.plan_start_date %}
+              <span class="muted small">
+                {{ p.plan_start_date }}{% if p.plan_end_date and p.plan_end_date != p.plan_start_date %} – {{ p.plan_end_date }}{% endif %}
+              </span>
+            {% endif %}
+            <span class="muted small">updated {{ p.last_touched[:10] }}</span>
+          </div>
+        </a>
+      </li>
+      {% endfor %}
+    </ul>
+    <a class="button-link secondary" href="/teachers/{{ teacher.id }}/lesson-plans" style="margin-top: 10px;">
+      All {{ teacher.first }}'s plans →
+    </a>
+    {% endif %}
+  </div>
+</section>
+
+<div class="prep-bottom-nav">
+  <a class="button-link secondary" href="/teachers/{{ teacher.id }}">
+    <svg class="icon icon-sm"><use href="#icon-teachers"/></svg>
+    Full teacher hub
+  </a>
+  <a class="button-link" href="/observations">
+    <svg class="icon icon-sm"><use href="#icon-observations"/></svg>
+    After observation: upload video →
+  </a>
+</div>
+
+{% endblock %}

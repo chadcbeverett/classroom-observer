@@ -1,0 +1,210 @@
+{% extends "base.html" %}
+{% block title %}School dashboard · Classroom Observer{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h1><svg class="icon icon-lg"><use href="#icon-district"/></svg>School dashboard</h1>
+    <p class="muted">Patterns across the building, coach effectiveness, AI oversight.</p>
+  </div>
+  <div class="page-header-meta">
+    <a class="button-link secondary" href="/compliance">
+      <svg class="icon icon-sm"><use href="#icon-check"/></svg>Compliance report
+    </a>
+    <span class="count-chip">Principal view</span>
+  </div>
+</div>
+
+{# ---- Section 1: School-wide patterns ---- #}
+<div class="section-title-row">
+  <h2><svg class="icon"><use href="#icon-goal"/></svg>School-wide patterns</h2>
+</div>
+
+<section class="principal-patterns">
+  {# Weakest domain callout #}
+  {% if weakest %}
+  <div class="pattern-hero warm">
+    <div class="obs-spotlight-label" style="color: var(--warm-strong);">
+      <svg class="icon icon-sm"><use href="#icon-alert"/></svg>
+      Common weak domain
+    </div>
+    <h3>{{ weakest.domain }}</h3>
+    <div class="pattern-hero-value">{{ weakest.pct }}%</div>
+    <div class="pattern-hero-sub">
+      of published ratings on this domain are <strong>Ineffective</strong> or <strong>Minimally Effective</strong>
+      ({{ weakest.n_weak }} of {{ weakest.n_total }})
+    </div>
+    <div class="muted small" style="margin-top: 8px;">
+      Consider building-wide PD focused on this domain.
+    </div>
+  </div>
+  {% else %}
+  <div class="pattern-hero dim">
+    <div class="obs-spotlight-label muted">Common weak domain</div>
+    <div class="pattern-hero-value">—</div>
+    <div class="pattern-hero-sub">Need more published observations to identify a pattern.</div>
+  </div>
+  {% endif %}
+
+  {# Rating trajectory summary #}
+  <div class="pattern-hero cool">
+    <div class="obs-spotlight-label" style="color: var(--cool);">
+      <svg class="icon icon-sm"><use href="#icon-trend-up"/></svg>
+      Rating movement (across all teachers)
+    </div>
+    <div class="pattern-hero-body">
+      {% for domain in rubric_domains %}
+        {% set d = deltas_by_domain[domain] %}
+        {% set total = d.up + d.flat + d.down %}
+        {% if total %}
+          <div class="domain-delta">
+            <div class="domain-delta-name">{{ domain }}</div>
+            <div class="domain-delta-bar">
+              {% if d.up %}<div class="delta-seg up" style="width: {{ (d.up/total*100)|round(1) }}%" title="{{ d.up }} teachers improved">{{ d.up }}</div>{% endif %}
+              {% if d.flat %}<div class="delta-seg flat" style="width: {{ (d.flat/total*100)|round(1) }}%" title="{{ d.flat }} teachers flat">{{ d.flat }}</div>{% endif %}
+              {% if d.down %}<div class="delta-seg down" style="width: {{ (d.down/total*100)|round(1) }}%" title="{{ d.down }} teachers declined">{{ d.down }}</div>{% endif %}
+            </div>
+          </div>
+        {% endif %}
+      {% endfor %}
+      {% set has_any = deltas_by_domain.values() | selectattr('up') | list %}
+      {% if not has_any %}
+        <p class="muted small">Need at least 2 observations per teacher per domain to compute movement.</p>
+      {% else %}
+        <div class="muted small" style="margin-top: 8px;">
+          <span class="delta-legend"><span class="delta-swatch up"></span>improved</span>
+          <span class="delta-legend"><span class="delta-swatch flat"></span>flat</span>
+          <span class="delta-legend"><span class="delta-swatch down"></span>declined</span>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+</section>
+
+{# ---- Section 2: Coach effectiveness ---- #}
+<div class="section-title-row">
+  <h2><svg class="icon"><use href="#icon-teachers"/></svg>Coach effectiveness</h2>
+</div>
+{% if coach_stats %}
+<section class="card" style="padding: 0; overflow: hidden;">
+<table class="obs-table row-list">
+  <thead>
+    <tr>
+      <th>Coach</th>
+      <th>Caseload</th>
+      <th>Cycles</th>
+      <th>Moves published</th>
+      <th>From AI</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for c in coach_stats %}
+    <tr>
+      <td><strong>{{ c.name }}</strong></td>
+      <td>{{ c.caseload }} teacher{{ 's' if c.caseload != 1 }}</td>
+      <td>
+        <span class="muted small">{{ c.cycles_open }} open · {{ c.cycles_closed }} closed</span>
+      </td>
+      <td>{{ c.moves_published }}</td>
+      <td>
+        {% if c.ai_pct is not none %}
+          <div class="coach-ai-bar">
+            <div class="coach-ai-fill" style="width: {{ c.ai_pct }}%"></div>
+          </div>
+          <div class="muted small">{{ c.moves_from_ai }} of {{ c.moves_published }} ({{ c.ai_pct }}%)</div>
+        {% else %}
+          <span class="muted small">—</span>
+        {% endif %}
+      </td>
+      <td>—</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</section>
+{% else %}
+<p class="muted">No coaches on record.</p>
+{% endif %}
+
+{# ---- Section 3: Teachers at a glance ---- #}
+<div class="section-title-row">
+  <h2><svg class="icon"><use href="#icon-teachers"/></svg>Teachers at a glance</h2>
+  <a href="/teachers">All teachers →</a>
+</div>
+<div class="teacher-tiles">
+  {% for t in teachers %}
+  <a href="/teachers/{{ t.id }}" class="teacher-tile">
+    <span class="avatar avatar-sm avatar-{{ avatar_palette[avatar_idx(t.name)] }}">{{ (t.name[:1] | upper) }}</span>
+    <div>
+      <span class="teacher-name">{{ t.name }}</span>
+      <span class="teacher-sub">
+        {{ t.obs_count }} obs · {{ t.active_cycles }} cycle{{ 's' if t.active_cycles != 1 }} · {{ t.active_goals }} goal{{ 's' if t.active_goals != 1 }}
+      </span>
+    </div>
+  </a>
+  {% endfor %}
+</div>
+
+{# ---- Section 4: AI oversight ---- #}
+<div class="section-title-row">
+  <h2><svg class="icon"><use href="#icon-sparkle"/></svg>Recent AI ↔ coach interactions</h2>
+  <span class="muted small">principals see raw AI reads — coach oversight</span>
+</div>
+{% if recent_ai %}
+<section class="card">
+  <p class="muted small">
+    How each observation's AI suggestion was handled by the coach. Accepted verbatim / edited / written fresh / no move yet.
+  </p>
+  <ul class="ai-oversight-list">
+    {% for r in recent_ai %}
+    {% set cls = r.classification %}
+    <li class="ai-oversight-item ai-{{ cls }}">
+      <div class="ai-oversight-header">
+        <strong>{{ r.teacher_name }}</strong>
+        <span class="muted small">{{ r.scored_at[:10] if r.scored_at else '' }}</span>
+        {% if cls == 'accepted_verbatim' %}
+          <span class="pill" style="background: #d7ecd8; color: #1c4d1e;">Accepted verbatim</span>
+        {% elif cls == 'edited_from_ai' %}
+          <span class="pill pill-impl-partial">Edited from AI</span>
+        {% elif cls == 'coach_fresh' %}
+          <span class="pill" style="background: var(--accent-tint); color: var(--accent-deep);">Coach wrote fresh</span>
+        {% else %}
+          <span class="pill">Not yet published</span>
+        {% endif %}
+        <a class="button-link secondary" style="margin-left: auto; font-size: 12px;" href="/observations/{{ r.obs_id }}">Open →</a>
+      </div>
+      {% if r.ai_move_text %}
+        <details class="ai-oversight-details">
+          <summary class="muted small" style="cursor: pointer;">Compare AI vs. coach text</summary>
+          <div class="ai-oversight-compare">
+            <div>
+              <div class="ai-oversight-label">
+                <svg class="icon icon-sm"><use href="#icon-sparkle"/></svg>
+                AI suggested
+              </div>
+              <p>{{ r.ai_move_text }}</p>
+            </div>
+            <div>
+              <div class="ai-oversight-label">
+                <svg class="icon icon-sm"><use href="#icon-check"/></svg>
+                Coach published
+              </div>
+              {% if r.coach_move_text %}
+                <p>{{ r.coach_move_text }}</p>
+              {% else %}
+                <p class="muted"><em>(no coach move yet)</em></p>
+              {% endif %}
+            </div>
+          </div>
+        </details>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% else %}
+<p class="muted">No observations with AI reads on file yet.</p>
+{% endif %}
+
+{% endblock %}
