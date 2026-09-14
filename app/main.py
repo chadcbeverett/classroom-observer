@@ -2655,6 +2655,22 @@ def _render_cycle(request: Request, cycle_id: str, *, template: str, close_warn:
 
     _av_idx = sum(ord(c) for c in (teacher["name"] or "")) % 6
 
+    # Print-report scaffolding: prepared-on date + span in weeks. The cycle
+    # detail page shows week progress from the cycle-progress helper; the
+    # print report needs its own thing because closed cycles report a fixed
+    # span, not a live "week X of Y".
+    from datetime import datetime as _dt_print, date as _date_print
+    _prepared_on = _dt_print.now(timezone.utc).date().isoformat()
+    _cycle_span_weeks = None
+    _cycle_span_days = None
+    try:
+        _opened = _date_print.fromisoformat(cycle["opened_at"][:10])
+        _end = _date_print.fromisoformat((cycle["closed_at"] or _prepared_on)[:10])
+        _cycle_span_days = (_end - _opened).days
+        _cycle_span_weeks = max(1, round(_cycle_span_days / 7))
+    except Exception:
+        pass
+
     return TEMPLATES.TemplateResponse(template, {
         "request": request,
         "cycle": cycle,
@@ -2668,6 +2684,9 @@ def _render_cycle(request: Request, cycle_id: str, *, template: str, close_warn:
         "actions_in_cycle": actions_in_cycle,
         "domains": rubric.domains,
         "is_active": cycle.get("closed_at") is None,
+        "prepared_on": _prepared_on,
+        "cycle_span_weeks": _cycle_span_weeks,
+        "cycle_span_days": _cycle_span_days,
     })
 
 
