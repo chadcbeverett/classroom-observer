@@ -6,11 +6,18 @@
 {% set _avatar_class = _avatar_palette[avatar_idx % 6] %}
 
 {% set _status_steps = [
-  ('submitted', 'Submitted'),
-  ('coach_reviewed', 'Coach reviewed'),
-  ('revision_requested', 'Revision requested'),
-  ('approved', 'Approved')
+  ('submitted', 'Sent in'),
+  ('coach_reviewed', 'Coach has looked'),
+  ('revision_requested', 'Revision asked for'),
+  ('approved', 'Ready to teach')
 ] %}
+{% set _status_labels = {
+  'submitted': 'sent in',
+  'coach_reviewed': 'coach has looked',
+  'revision_requested': 'revision asked for',
+  'approved': 'ready to teach',
+  'archived': 'archived',
+} %}
 {% set _status_order = ['submitted', 'coach_reviewed', 'revision_requested', 'approved'] %}
 {% set _cur_idx = _status_order.index(plan.status) if plan.status in _status_order else -1 %}
 
@@ -33,13 +40,13 @@
       <a href="/teachers/{{ plan.teacher_id }}" class="obs-hero-name">{{ plan.teacher_name }}</a>
       · v{{ plan.current_version }}
       {% if plan.plan_start_date %}
-        · Covers {{ plan.plan_start_date }}{% if plan.plan_end_date %} – {{ plan.plan_end_date }}{% endif %}
+        · Covers {{ plan.plan_start_date | warmdate }}{% if plan.plan_end_date %} – {{ plan.plan_end_date | warmdate }}{% endif %}
       {% endif %}
     </p>
   </div>
   <div class="teacher-hero-actions" style="align-items: flex-end;">
     <span class="pill pill-{{ plan.status }}" style="font-size: 12px; padding: 3px 10px;">
-      {{ plan.status|replace('_', ' ') }}
+      {{ _status_labels.get(plan.status, plan.status|replace('_', ' ')) }}
     </span>
     {% if plan.status == 'archived' %}
       <span class="muted small">archived</span>
@@ -57,23 +64,23 @@
     </div>
     {% if _current_version %}
       <h3>{{ _current_version.original_filename }}</h3>
-      <div class="muted small">Uploaded {{ _current_version.created_at[:16] }}</div>
+      <div class="muted small">Brought in {{ _current_version.created_at | warmdatetime }}</div>
       <p style="margin-top: 10px;">
         <a class="button-link" href="/lesson-plans/{{ plan.id }}/file/v{{ _current_version.version_number }}">
           <svg class="icon icon-sm"><use href="#icon-arrow-right"/></svg>
-          Download / open
+          Open the file
         </a>
       </p>
     {% else %}
-      <p class="muted">No version file on record.</p>
+      <p class="muted">No file on record.</p>
     {% endif %}
     <details class="add-form">
-      <summary>+ Upload revision (v{{ plan.current_version + 1 }})</summary>
+      <summary>+ Send in a revision (v{{ plan.current_version + 1 }})</summary>
       <form method="post" action="/lesson-plans/{{ plan.id }}/versions" enctype="multipart/form-data">
         <label>File
           <input type="file" name="document" accept=".pdf,.docx,.doc" required>
         </label>
-        <button type="submit">Upload revision</button>
+        <button type="submit">Send it in</button>
       </form>
     </details>
   </div>
@@ -82,7 +89,7 @@
   <div class="obs-spotlight obs-spotlight-coach">
     <div class="obs-spotlight-label">
       <svg class="icon icon-sm"><use href="#icon-check"/></svg>
-      Review status
+      Where it is
     </div>
     <ol class="lp-status-stepper">
       {% for slug, label in _status_steps %}
@@ -102,14 +109,14 @@
       {% endfor %}
     </ol>
     <form method="post" action="/lesson-plans/{{ plan.id }}/status" class="inline-form" style="margin-top: 12px;">
-      <label>Change status
+      <label>Move it to
         <select name="status">
           {% for opt in ['submitted', 'coach_reviewed', 'revision_requested', 'approved', 'archived'] %}
-          <option value="{{ opt }}" {{ 'selected' if plan.status == opt }}>{{ opt|replace('_', ' ') }}</option>
+          <option value="{{ opt }}" {{ 'selected' if plan.status == opt }}>{{ _status_labels.get(opt, opt|replace('_', ' ')) }}</option>
           {% endfor %}
         </select>
       </label>
-      <button type="submit">Update</button>
+      <button type="submit">Move it</button>
     </form>
   </div>
 </section>
@@ -130,7 +137,7 @@
             <span class="pill pill-active" style="margin-left: 6px;">current</span>
           {% endif %}
         </div>
-        <div class="muted small">Uploaded {{ v.created_at[:16] }}</div>
+        <div class="muted small">Brought in {{ v.created_at | warmdatetime }}</div>
       </div>
     </li>
     {% endfor %}
@@ -139,7 +146,7 @@
 
 {# ---- Comment thread ---- #}
 <div class="section-title-row" id="comments">
-  <h2><svg class="icon"><use href="#icon-observations"/></svg>Comments <span class="muted small" style="text-transform:none;letter-spacing:0;">({{ comments|length }})</span></h2>
+  <h2><svg class="icon"><use href="#icon-observations"/></svg>Conversation <span class="muted small" style="text-transform:none;letter-spacing:0;">({{ comments|length }})</span></h2>
 </div>
 <section class="card">
   {% if comments %}
@@ -155,7 +162,7 @@
               <strong>{{ c.author_name }}</strong>
               <span class="pill pill-role-{{ c.author_role }}">{{ c.author_role|replace('_', ' ') }}</span>
             </div>
-            <div class="muted small">v{{ c.plan_version_number }} · {{ c.created_at[:16] }}</div>
+            <div class="muted small">v{{ c.plan_version_number }} · {{ c.created_at | warmdatetime }}</div>
           </div>
         </div>
         <div class="comment-body">{{ c.body }}</div>
@@ -163,25 +170,18 @@
       {% endfor %}
     </div>
   {% else %}
-    <p class="muted">No comments yet. Start the conversation below.</p>
+    <p class="muted">Nothing said yet. Start the conversation below.</p>
   {% endif %}
 
   <details class="add-form" open>
-    <summary>+ Add a comment (on v{{ plan.current_version }})</summary>
+    <summary>+ Add to the conversation (on v{{ plan.current_version }})</summary>
     <form method="post" action="/lesson-plans/{{ plan.id }}/comments">
       <input type="hidden" name="plan_version_number" value="{{ plan.current_version }}">
-      <label>Speaking as
-        <select name="author_role">
-          <option value="coach">Coach</option>
-          <option value="teacher_self_serve">Teacher</option>
-          <option value="admin">Admin</option>
-        </select>
-      </label>
-      <label>Comment
+      <label>What are you noticing?
         <textarea name="body" rows="4" required
-                  placeholder="Feedback on the plan — questions, suggestions, or asks for revision."></textarea>
+                  placeholder="Questions, suggestions, or an ask for revision."></textarea>
       </label>
-      <button type="submit">Post comment</button>
+      <button type="submit">Post it</button>
     </form>
   </details>
 </section>

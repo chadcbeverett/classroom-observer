@@ -123,21 +123,33 @@
   Print-friendly cycle report. Use <strong>Cmd+P → Save as PDF</strong> to export.
 </div>
 
+{% set _impl_labels_print = {
+  'full': 'landed full',
+  'partial': 'landed partial',
+  'not_observed': "didn't see it",
+  'regressed': 'went the other way',
+} %}
+{% set _goal_status_labels_print = {
+  'proposed': 'waiting', 'active': 'in play',
+  'closed_met': 'met', 'closed_partial': 'partial',
+  'closed_unmet': 'unmet', 'abandoned': 'set aside',
+} %}
+
 <header class="report-header">
   <h1>Coaching cycle report — {{ teacher.name }}</h1>
   <p class="meta">
     {% set title = cycle.notes.splitlines()[0] if cycle.notes else 'Coaching cycle' %}
     <strong>{{ title }}</strong><br>
-    Opened {{ cycle.opened_at[:10] }}
-    {% if cycle.closed_at %} · Closed {{ cycle.closed_at[:10] }}{% endif %}
-    · Status: {{ 'active' if is_active else 'closed' }}
+    Opened {{ cycle.opened_at | warmdate }}
+    {% if cycle.closed_at %} · Closed {{ cycle.closed_at | warmdate }}{% endif %}
+    · Status: {{ 'in play' if is_active else 'closed' }}
   </p>
 </header>
 
 {% if cycle.growth_story %}
 <h2>Growth story</h2>
 <p style="white-space: pre-wrap; font-size: 11pt; line-height: 1.55; padding: 8pt 12pt; background: #fdf9ed; border-left: 3pt solid #c9a94b;">{{ cycle.growth_story }}</p>
-<p class="muted small">— Coach's narrative of what changed over the arc</p>
+<p class="muted small">— Coach's telling of what changed over the arc</p>
 {% endif %}
 
 {% if cycle.notes and cycle.notes.splitlines()|length > 1 %}
@@ -149,65 +161,65 @@
 {% if goals %}
   {% for g in goals %}
     <div class="goal-block">
-      <div class="goal-status">{{ g.status|replace('_', ' ') }} · proposed by {{ g.proposed_by }}</div>
+      <div class="goal-status">{{ _goal_status_labels_print.get(g.status, g.status|replace('_', ' ')) }} · brought by {{ g.proposed_by }}</div>
       <strong>{{ g.title }}</strong>
       {% if g.description %}<p>{{ g.description }}</p>{% endif %}
-      {% if g.related_rubric_domain %}<p class="muted small">Targets: {{ g.related_rubric_domain }}{% if g.related_core_teacher_skill %} — {{ g.related_core_teacher_skill }}{% endif %}</p>{% endif %}
+      {% if g.related_rubric_domain %}<p class="muted small">Working on: {{ g.related_rubric_domain }}{% if g.related_core_teacher_skill %} — {{ g.related_core_teacher_skill }}{% endif %}</p>{% endif %}
       {% if g.success_indicators %}
-        <p class="muted small">Success indicators:</p>
+        <p class="muted small">Signals we were looking for:</p>
         <ul>{% for s in g.success_indicators %}<li>{{ s }}</li>{% endfor %}</ul>
       {% endif %}
     </div>
   {% endfor %}
 {% else %}
-  <p class="muted">No goals attached.</p>
+  <p class="muted">No goals tied to this cycle.</p>
 {% endif %}
 
-<h2>Impact — rating movement</h2>
+<h2>How the ratings moved on the domains being worked on</h2>
 {% if impact %}
   {% for row in impact %}
     <h3>{{ row.domain }}
       {% if row.delta is not none %}
-        {% if row.delta > 0 %}<span class="muted">(+{{ row.delta }} over {{ row.n_observations }} obs)</span>
-        {% elif row.delta < 0 %}<span class="muted">({{ row.delta }} over {{ row.n_observations }} obs)</span>
-        {% else %}<span class="muted">(flat over {{ row.n_observations }} obs)</span>
+        {% if row.delta > 0 %}<span class="muted">(+{{ row.delta }} over {{ row.n_observations }} observation{{ 's' if row.n_observations != 1 }})</span>
+        {% elif row.delta < 0 %}<span class="muted">({{ row.delta }} over {{ row.n_observations }} observation{{ 's' if row.n_observations != 1 }})</span>
+        {% else %}<span class="muted">(flat over {{ row.n_observations }} observation{{ 's' if row.n_observations != 1 }})</span>
         {% endif %}
       {% endif %}
     </h3>
     <ul class="trail">
       {% for ts, rating in row.trail %}
       <li>
-        <span class="muted small">{{ ts[:10] }}</span>
+        <span class="muted small">{{ ts | warmdate }}</span>
         <span class="rating rating-{{ rating|replace(' ', '-')|lower }}">{{ rating }}</span>
       </li>
       {% endfor %}
     </ul>
   {% endfor %}
 {% else %}
-  <p class="muted">No targeted-domain rating movement recorded.</p>
+  <p class="muted">No movement recorded on the domains being worked on.</p>
 {% endif %}
 
-<h2>Impact — bite-sized action implementation</h2>
+<h2>How the bite-sized moves landed</h2>
 {% if action_stats.total_issued %}
 <div class="impl-stats">
-  <div><span class="muted small">Issued</span><br><strong>{{ action_stats.total_issued }}</strong></div>
-  <div><span class="muted small">Assessed</span><br><strong>{{ action_stats.total_assessed }}</strong></div>
-  <div><span class="muted small">Awaiting</span><br><strong>{{ action_stats.awaiting }}</strong></div>
+  <div><span class="muted small">Named</span><br><strong>{{ action_stats.total_issued }}</strong></div>
+  <div><span class="muted small">Read</span><br><strong>{{ action_stats.total_assessed }}</strong></div>
+  <div><span class="muted small">Still to read</span><br><strong>{{ action_stats.awaiting }}</strong></div>
   {% if action_stats.implementation_rate_pct is not none %}
-  <div><span class="muted small">Implementation rate</span><br><strong>{{ action_stats.implementation_rate_pct }}%</strong></div>
+  <div><span class="muted small">Landing rate</span><br><strong>{{ action_stats.implementation_rate_pct }}%</strong></div>
   {% endif %}
 </div>
 {% for a in actions_in_cycle %}
 <div class="action-block">
   <strong>{{ a.core_teacher_skill }}</strong>
-  <span class="pill">{{ a.implementation|replace('_', ' ') if a.implementation else 'awaiting' }}</span>
-  <p class="muted small">{{ a.related_domain }} · issued {{ a.created_at[:10] }}</p>
+  <span class="pill">{{ _impl_labels_print.get(a.implementation, a.implementation|replace('_', ' ')) if a.implementation else 'still to read' }}</span>
+  <p class="muted small">{{ a.related_domain }} · named {{ a.created_at | warmdate }}</p>
   <p>{{ a.bite_sized_action_text }}</p>
-  {% if a.evidence_notes %}<p class="muted small">Evidence: {{ a.evidence_notes }}</p>{% endif %}
+  {% if a.evidence_notes %}<p class="muted small">What was seen: {{ a.evidence_notes }}</p>{% endif %}
 </div>
 {% endfor %}
 {% else %}
-<p class="muted">No actions issued in this cycle yet.</p>
+<p class="muted">No moves named in this cycle yet.</p>
 {% endif %}
 
 <h2>Observations</h2>
@@ -217,14 +229,14 @@
     <tr>
       <th>Date</th>
       <th>Video</th>
-      <th>Duration</th>
+      <th>Length</th>
       <th>Ratings</th>
     </tr>
   </thead>
   <tbody>
     {% for o in observations %}
     <tr>
-      <td>{{ (o.scored_at or o.uploaded_at or '')[:10] }}</td>
+      <td>{{ (o.scored_at or o.uploaded_at or '') | warmdate }}</td>
       <td>{{ o.video_filename }}</td>
       <td>{% if o.video_duration_s %}{{ (o.video_duration_s|int) // 60 }}:{{ '%02d' % ((o.video_duration_s|int) % 60) }}{% else %}—{% endif %}</td>
       <td>
@@ -237,11 +249,11 @@
   </tbody>
 </table>
 {% else %}
-<p class="muted">No observations attached.</p>
+<p class="muted">No observations tied to this cycle.</p>
 {% endif %}
 
 <footer>
-  Classroom Observer · Generated for {{ teacher.name }} · Cycle {{ cycle.id[:8] }}
+  Classroom Observer · Prepared for {{ teacher.name }} · Cycle {{ cycle.id[:8] }}
 </footer>
 
 </body>

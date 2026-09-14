@@ -5,6 +5,17 @@
 {% set _avatar_palette = ['blue', 'teal', 'amber', 'plum', 'green', 'rose'] %}
 {% set _avatar_class = _avatar_palette[avatar_idx % 6] %}
 
+{# Warm labels for the raw goal-status codes. Storage keeps the mechanical
+   values; the coach-facing pill uses these. #}
+{% set _goal_status_labels = {
+  'proposed': 'waiting',
+  'active': 'in play',
+  'closed_met': 'met',
+  'closed_partial': 'partial',
+  'closed_unmet': 'unmet',
+  'abandoned': 'set aside',
+} %}
+
 <p class="crumbs"><a href="/teachers">← Teachers</a></p>
 
 {# ---- Hero card: avatar + name + one-line summary ---- #}
@@ -18,32 +29,32 @@
       {{ hero_summary }}
       {% if next_obs_due %}
         {% if next_obs_due.overdue %}
-          · <span class="hero-obs-due overdue">Next obs was due {{ next_obs_due.due_date }} ({{ -next_obs_due.days_until }}d past)</span>
+          · <span class="hero-obs-due overdue">Time to be back in {{ teacher.name.split()[0] }}'s room — {{ -next_obs_due.days_until }}d past the cadence</span>
         {% elif next_obs_due.days_until <= 7 %}
-          · <span class="hero-obs-due soon">Next obs due {{ next_obs_due.due_date }} ({{ next_obs_due.days_until }}d)</span>
+          · <span class="hero-obs-due soon">Back in {{ teacher.name.split()[0] }}'s room by {{ next_obs_due.due_date | warmdate }} ({{ next_obs_due.days_until }}d)</span>
         {% else %}
-          · <span class="muted">Next obs due {{ next_obs_due.due_date }}</span>
+          · <span class="muted">Back in {{ teacher.name.split()[0] }}'s room by {{ next_obs_due.due_date | warmdate }}</span>
         {% endif %}
       {% endif %}
     </p>
   </div>
   <div class="teacher-hero-actions">
     <a class="button-link" href="/teachers/{{ teacher.id }}/prep">
-      <svg class="icon"><use href="#icon-clock"/></svg>Prep for observation
+      <svg class="icon"><use href="#icon-clock"/></svg>Prep for the visit
     </a>
     <form method="post" action="/whoami/switch" style="display:inline;">
       <input type="hidden" name="role" value="teacher">
       <input type="hidden" name="teacher_id" value="{{ teacher.id }}">
       <input type="hidden" name="redirect_to" value="/teachers/{{ teacher.id }}/teacher-view">
       <button type="submit" class="button-link secondary" style="border:1px solid var(--border);cursor:pointer;">
-        <svg class="icon"><use href="#icon-arrow-right"/></svg>View as {{ teacher.name.split()[0] }}
+        <svg class="icon"><use href="#icon-arrow-right"/></svg>See what {{ teacher.name.split()[0] }} sees
       </button>
     </form>
     <a class="button-link secondary" href="/teachers/{{ teacher.id }}/profile/teacher">
-      <svg class="icon"><use href="#icon-teachers"/></svg>Edit teacher side
+      <svg class="icon"><use href="#icon-teachers"/></svg>{{ teacher.name.split()[0] }}'s side
     </a>
     <a class="button-link secondary" href="/teachers/{{ teacher.id }}/profile/coach">
-      <svg class="icon"><use href="#icon-check"/></svg>Edit coach side
+      <svg class="icon"><use href="#icon-check"/></svg>Your side
     </a>
   </div>
 </section>
@@ -71,8 +82,8 @@
               <a class="attention-item" href="/observations/{{ a.obs_id }}">
                 <svg class="icon"><use href="#icon-observations"/></svg>
                 <div class="attention-body">
-                  <div class="title">Ready to draft the next move</div>
-                  <div class="sub">Observation scored {{ a.days }} day{{ 's' if a.days != 1 }} ago</div>
+                  <div class="title">Time to name the next move</div>
+                  <div class="sub">You watched {{ teacher.name.split()[0] }} {{ a.days }} day{{ 's' if a.days != 1 }} ago</div>
                 </div>
                 <div class="attention-meta">{{ a.days }}d</div>
               </a>
@@ -82,7 +93,7 @@
               <a class="attention-item" href="#actions-{{ a.action_id }}">
                 <svg class="icon"><use href="#icon-action"/></svg>
                 <div class="attention-body">
-                  <div class="title">Ready to assess how it went</div>
+                  <div class="title">Time to notice how the move landed</div>
                   <div class="sub">"{{ a.text[:90] }}{{ '…' if a.text|length > 90 }}"</div>
                 </div>
                 <div class="attention-meta">{{ a.days }}d</div>
@@ -94,12 +105,12 @@
                 <svg class="icon"><use href="#icon-cycle"/></svg>
                 <div class="attention-body">
                   <div class="title">
-                    {% if a.days_until < 0 %}Cycle is closing — a good moment to reflect together
-                    {% elif a.days_until == 0 %}Cycle closes today — reflection time
-                    {% else %}Cycle closes in {{ a.days_until }} day{{ 's' if a.days_until != 1 }} — start shaping the close
+                    {% if a.days_until < 0 %}This cycle is asking to be closed — a moment to reflect together
+                    {% elif a.days_until == 0 %}This cycle closes today — a good moment to sit together
+                    {% else %}This cycle closes in {{ a.days_until }} day{{ 's' if a.days_until != 1 }} — start shaping how it wraps
                     {% endif %}
                   </div>
-                  <div class="sub">Expected close: {{ a.expected_close_date }}</div>
+                  <div class="sub">Aimed for {{ a.expected_close_date | warmdate }}</div>
                 </div>
                 <div class="attention-meta">
                   {% if a.days_until < 0 %}{{ -a.days_until }}d past{% else %}{{ a.days_until }}d{% endif %}
@@ -111,8 +122,8 @@
               <a class="attention-item" href="/observations">
                 <svg class="icon"><use href="#icon-clock"/></svg>
                 <div class="attention-body">
-                  <div class="title">Due for the next observation</div>
-                  <div class="sub">District cadence expected; last observation was {{ a.last_obs_at }} — {{ a.days_late }} day{{ 's' if a.days_late != 1 }} past the interval</div>
+                  <div class="title">Time to be back in {{ teacher.name.split()[0] }}'s room</div>
+                  <div class="sub">You last watched {{ teacher.name.split()[0] }} {{ a.last_obs_at | warmdate }} — {{ a.days_late }} day{{ 's' if a.days_late != 1 }} past your district's cadence</div>
                 </div>
                 <div class="attention-meta">{{ a.days_late }}d</div>
               </a>
@@ -123,8 +134,8 @@
                 <svg class="icon"><use href="#icon-lesson-plan"/></svg>
                 <div class="attention-body">
                   <div class="title">
-                    {% if a.status == 'submitted' %}Lesson plan ready for your read
-                    {% else %}Revised plan ready for another look
+                    {% if a.status == 'submitted' %}{{ teacher.name.split()[0] }} sent a plan for your read
+                    {% else %}{{ teacher.name.split()[0] }}'s revised plan is up
                     {% endif %}
                   </div>
                   <div class="sub">{{ a.title }}</div>
@@ -150,7 +161,7 @@
   <div class="{{ kpi_class }}">
     <div class="kpi-label">
       <svg class="icon icon-sm"><use href="#icon-trend-up"/></svg>
-      Their implementation rate
+      How the moves are landing
     </div>
     <div>
       <div class="kpi-value {{ 'small' if t_impl_rate is none }}">
@@ -158,12 +169,12 @@
       </div>
       <div class="kpi-sub">
         {% if t_assessed_actions %}
-          {{ t_assessed_actions }} of {{ t_total_actions }} actions assessed<br>
-          Success rate {% if t_success_rate is not none %}{{ t_success_rate }}%{% else %}—{% endif %}
+          You've read {{ t_assessed_actions }} of {{ t_total_actions }} moves<br>
+          Sticking full: {% if t_success_rate is not none %}{{ t_success_rate }}%{% else %}—{% endif %}
         {% elif t_total_actions %}
-          {{ t_total_actions }} action{{ 's' if t_total_actions != 1 }} issued, none assessed yet
+          {{ t_total_actions }} move{{ 's' if t_total_actions != 1 }} named, none read yet
         {% else %}
-          No bite-sized actions yet
+          No moves named yet
         {% endif %}
       </div>
     </div>
@@ -197,17 +208,17 @@
           </div>
           <div class="cycle-progress-sub">
             {% if prog.days_remaining >= 0 %}
-              {{ prog.days_remaining }} day{{ 's' if prog.days_remaining != 1 }} remaining
+              {{ prog.days_remaining }} day{{ 's' if prog.days_remaining != 1 }} to go
             {% else %}
-              Overdue by {{ -prog.days_remaining }} day{{ 's' if prog.days_remaining != -1 }}
+              Past the aim by {{ -prog.days_remaining }} day{{ 's' if prog.days_remaining != -1 }}
             {% endif %}
           </div>
         </div>
         {% endif %}
       </div>
       <div class="cycle-spotlight-meta">
-        Opened {{ c.opened_at[:10] }}
-        {% if c.expected_close_date %} · Expected close {{ c.expected_close_date }}{% endif %}
+        Opened {{ c.opened_at | warmdate }}
+        {% if c.expected_close_date %} · Aimed for {{ c.expected_close_date | warmdate }}{% endif %}
       </div>
     </section>
   {% endfor %}
@@ -216,8 +227,8 @@
 {# ---- Skill-development narrative (growth arc — high signal for debrief) ---- #}
 {% if profile.skill_development_narrative %}
 <section class="card narrative-card">
-  <h2><svg class="icon"><use href="#icon-sparkle"/></svg>Skill-development trajectory</h2>
-  <p class="muted small">Coach's ongoing narrative of what this teacher is working to master.</p>
+  <h2><svg class="icon"><use href="#icon-sparkle"/></svg>Where {{ teacher.name.split()[0] }} is growing</h2>
+  <p class="muted small">Your ongoing narrative of what {{ teacher.name.split()[0] }} is working to master.</p>
   <div class="narrative-body">{{ profile.skill_development_narrative }}</div>
 </section>
 {% endif %}
@@ -229,8 +240,8 @@
 {% if not active_goals %}
   <div class="empty-cta compact">
     <span class="empty-cta-icon"><svg class="icon"><use href="#icon-goal"/></svg></span>
-    <h3>No goal in flight yet — a good moment to name one together</h3>
-    <p>A goal frames the coaching arc. Propose one below or bring it up at the next debrief with {{ teacher.name.split()[0] }}.</p>
+    <h3>No goal in play yet — a good moment to name one together</h3>
+    <p>A goal frames the coaching arc. Name one below or bring it up at the next debrief with {{ teacher.name.split()[0] }}.</p>
     {% if district_priorities_for_teacher %}
     <div class="district-priorities-inline">
       <div class="muted small" style="margin-top: 12px; font-weight: 600;">Your district's this-year priorities:</div>
@@ -263,7 +274,7 @@
           if (form) form.scrollIntoView({behavior:'smooth', block:'center'});
         }
       </script>
-      <div class="muted small" style="margin-top: 6px;">Click one to start a goal from that priority — you can edit before proposing.</div>
+      <div class="muted small" style="margin-top: 6px;">Click one to start a goal from that priority — you can rework it before you name it.</div>
     </div>
     {% endif %}
   </div>
@@ -274,7 +285,7 @@
     <div class="goal-card">
       <div class="goal-header">
         <strong>{{ g.title }}</strong>
-        <span class="pill pill-{{ g.status }}">{{ g.status|replace('_', ' ') }}</span>
+        <span class="pill pill-{{ g.status }}">{{ _goal_status_labels.get(g.status, g.status|replace('_', ' ')) }}</span>
       </div>
       {% if g.description %}<p>{{ g.description }}</p>{% endif %}
       {% if g.carried_forward_from_goal_id %}
@@ -306,7 +317,7 @@
         <ul>{% for s in g.success_indicators %}<li>{{ s }}</li>{% endfor %}</ul>
       {% endif %}
       <div class="goal-meta">
-        <span class="muted small">Proposed by {{ g.proposed_by }} · agreed {{ g.agreed_at[:10] if g.agreed_at else '—' }}</span>
+        <span class="muted small">Brought by {{ g.proposed_by }} · agreed {{ g.agreed_at | warmdate if g.agreed_at else '—' }}</span>
         {% if g.related_core_teacher_skill %}
           <span class="muted small">Skill: {{ g.related_core_teacher_skill }}</span>
         {% endif %}
@@ -314,12 +325,12 @@
       {% if g.status == 'proposed' %}
       <form method="post" action="/goals/{{ g.id }}/agree" style="display:inline;">
         <input type="hidden" name="teacher_id" value="{{ teacher.id }}">
-        <button type="submit">Mark agreed</button>
+        <button type="submit">Mark it agreed</button>
       </form>
       {% endif %}
       {% if g.status == 'active' %}
       <details class="goal-close-form">
-        <summary>Close this goal</summary>
+        <summary>Close it out</summary>
         <form method="post" action="/goals/{{ g.id }}/close" class="goal-close-inner">
           <input type="hidden" name="teacher_id" value="{{ teacher.id }}">
 
@@ -332,19 +343,19 @@
               <span>{{ s }}</span>
             </label>
             {% endfor %}
-            <div class="muted small" style="margin-top: 4px;">Outcome is derived from your checks: all → <em>met</em>, some → <em>partial</em>, none → <em>unmet</em>. Override below if needed.</div>
+            <div class="muted small" style="margin-top: 4px;">Outcome comes from what you checked: all → <em>met</em>, some → <em>partial</em>, none → <em>unmet</em>. Change it below if that doesn't fit.</div>
           </div>
           {% endif %}
 
           <div class="goal-close-block">
             <label class="goal-close-label">
-              Override outcome (optional)
+              Override the outcome (optional)
               <select name="outcome">
-                <option value="auto" selected>— use checkbox result —</option>
+                <option value="auto" selected>— use what I checked above —</option>
                 <option value="closed_met">Met</option>
                 <option value="closed_partial">Partially met</option>
                 <option value="closed_unmet">Not met</option>
-                <option value="abandoned">Abandoned</option>
+                <option value="abandoned">Set aside</option>
               </select>
             </label>
           </div>
@@ -356,8 +367,8 @@
                 <option value="">—</option>
                 <option value="not_actionable">The goal wasn't actionable enough</option>
                 <option value="not_prioritized">Other things took priority</option>
-                <option value="attempted_didnt_land">Attempted but the practice didn't land</option>
-                <option value="external_blockers">External blockers (schedule, class dynamics)</option>
+                <option value="attempted_didnt_land">Tried it, but the practice didn't land</option>
+                <option value="external_blockers">Other things got in the way (schedule, class dynamics)</option>
                 <option value="other">Other</option>
               </select>
             </label>
@@ -372,10 +383,10 @@
 
           <label class="goal-close-check goal-close-carry">
             <input type="checkbox" name="carry_forward" value="1">
-            <span>Carry this focus forward — seed a new proposed goal referencing this one</span>
+            <span>Carry this forward — start a fresh goal that names this one</span>
           </label>
 
-          <button type="submit">Close goal</button>
+          <button type="submit">Close it out</button>
         </form>
       </details>
       {% endif %}
@@ -385,27 +396,27 @@
 {% endif %}
 
 <details class="add-form">
-  <summary>+ Propose a new goal</summary>
+  <summary>+ Name a new goal</summary>
   <form method="post" action="/teachers/{{ teacher.id }}/goals">
     <label>Title <input type="text" name="title" required></label>
     <label>Description
-      <textarea name="description" rows="2" placeholder="What growth does this goal target?"></textarea>
+      <textarea name="description" rows="2" placeholder="What growth does this goal name?"></textarea>
     </label>
     <label>Success indicators (one per line)
       <textarea name="success_indicators" rows="3" placeholder="6+ student-to-student exchanges per lesson"></textarea>
     </label>
-    <label>What is the teacher setting aside? <span class="muted small">(naming the old habit that's being replaced — Bridges' "ending")</span>
+    <label>What is {{ teacher.name.split()[0] }} setting aside? <span class="muted small">(naming the old habit that's being replaced — Bridges' "ending")</span>
       <textarea name="releasing" rows="2" placeholder="e.g. 'teacher-echo confirmation as the default response to a student answer'"></textarea>
     </label>
     <div class="row">
-      <label>Proposed by
+      <label>Whose voice
         <select name="proposed_by">
-          <option value="coach">Coach</option>
-          <option value="teacher">Teacher</option>
-          <option value="joint" selected>Joint</option>
+          <option value="coach">Yours</option>
+          <option value="teacher">{{ teacher.name.split()[0] }}'s</option>
+          <option value="joint" selected>Both together</option>
         </select>
       </label>
-      <label>Related rubric domain
+      <label>Which rubric domain
         <select name="related_rubric_domain">
           <option value="">—</option>
           {% for d in domains %}<option value="{{ d }}">{{ d }}</option>{% endfor %}
@@ -417,27 +428,27 @@
     </label>
     {% if all_cycles %}
     {% set _default_cycle_id = active_cycles[0].id if active_cycles else '' %}
-    <label>Attach to coaching cycle
+    <label>Tie to a cycle
       <select name="coaching_cycle_id">
         {% for c in all_cycles %}
         <option value="{{ c.id }}" {{ 'selected' if _default_cycle_id == c.id }}>
-          {{ c.notes.splitlines()[0] if c.notes else 'Cycle' }} · opened {{ c.opened_at[:10] }}{% if c.closed_at %} · closed{% endif %}{% if _default_cycle_id == c.id %} — active{% endif %}
+          {{ c.notes.splitlines()[0] if c.notes else 'Cycle' }} · opened {{ c.opened_at | warmdate }}{% if c.closed_at %} · closed{% endif %}{% if _default_cycle_id == c.id %} — active{% endif %}
         </option>
         {% endfor %}
-        <option value="">— standalone (rare) —</option>
+        <option value="">— on its own (rare) —</option>
       </select>
       {% if active_cycles %}
-      <span class="muted small">Standalone goals don't feed the active cycle's growth KPI — attach to the active cycle to include this goal in impact metrics.</span>
+      <span class="muted small">Goals not tied to the active cycle don't feed its growth arc — tie in to include this in impact numbers.</span>
       {% endif %}
     </label>
     {% endif %}
     <input type="hidden" name="origin_priority_name" value="">
-    <label>Coach notes <textarea name="coach_notes" rows="2"></textarea></label>
-    <label>Teacher notes <textarea name="teacher_notes" rows="2"></textarea></label>
+    <label>Your notes <textarea name="coach_notes" rows="2"></textarea></label>
+    <label>{{ teacher.name.split()[0] }}'s notes <textarea name="teacher_notes" rows="2"></textarea></label>
     <label>
-      <input type="checkbox" name="agree_immediately" value="1"> Mark agreed on submit
+      <input type="checkbox" name="agree_immediately" value="1"> Already agreed — mark it in play
     </label>
-    <button type="submit">Propose goal</button>
+    <button type="submit">Name the goal</button>
   </form>
 </details>
 
@@ -449,8 +460,8 @@
     <li class="closed-goal-item closed-goal-{{ g.status }}">
       <div class="closed-goal-header">
         <strong>{{ g.title }}</strong>
-        <span class="pill pill-{{ g.status }}">{{ g.status|replace('_', ' ') }}</span>
-        <span class="muted small">closed {{ g.closed_at[:10] if g.closed_at else '—' }}</span>
+        <span class="pill pill-{{ g.status }}">{{ _goal_status_labels.get(g.status, g.status|replace('_', ' ')) }}</span>
+        <span class="muted small">closed {{ g.closed_at | warmdate if g.closed_at else '—' }}</span>
       </div>
       {% if g.closed_indicators_met %}
         {% set met = g.closed_indicators_met %}
@@ -474,16 +485,16 @@
 <div class="deep-dive-divider">
   <div class="deep-dive-title">
     <svg class="icon icon-sm"><use href="#icon-lesson-plan"/></svg>
-    Reference — expand for detail
+    Reference — click to open
   </div>
   <nav class="jump-to-strip" aria-label="Jump to reference section">
     <a href="#observations">Observations</a>
-    <a href="#actions">Open actions</a>
+    <a href="#actions">Moves still to read</a>
     <a href="#profile">Profile</a>
     <a href="#cycles">Cycle history</a>
     <a href="#lesson-plans-link">Lesson plans</a>
     <a href="#practice-log">Practice log</a>
-    <a href="#notes">Private notes</a>
+    <a href="#notes">Your private notes</a>
   </nav>
 </div>
 
@@ -500,9 +511,9 @@
     <div class="empty-cta compact">
       <span class="empty-cta-icon"><svg class="icon"><use href="#icon-observations"/></svg></span>
       <h3>The first visit sets the pattern</h3>
-      <p>Once you observe {{ teacher.name.split()[0] }} and upload the video, the coaching arc starts — the AI reads, you draft the first move, {{ teacher.name.split()[0] }} responds.</p>
+      <p>Once you're in {{ teacher.name.split()[0] }}'s room and bring in the video, the coaching arc starts — the AI reads, you name the first move, {{ teacher.name.split()[0] }} writes back.</p>
       <a class="button-link" href="/observations">
-        <svg class="icon icon-sm"><use href="#icon-arrow-right"/></svg>Upload first observation
+        <svg class="icon icon-sm"><use href="#icon-arrow-right"/></svg>Bring in the first observation
       </a>
     </div>
   {% else %}
@@ -510,8 +521,8 @@
     <thead>
       <tr>
         <th>Video</th>
-        <th>Uploaded</th>
-        <th>Status</th>
+        <th>Watched</th>
+        <th>Where it's at</th>
         <th>Ratings</th>
         <th></th>
       </tr>
@@ -520,14 +531,14 @@
       {% for o in observations %}
       <tr>
         <td class="mono truncate">{{ o.video_filename }}</td>
-        <td class="muted small">{{ o.uploaded_at }}</td>
+        <td class="muted small">{{ o.uploaded_at | warmdatetime }}</td>
         <td><span class="badge badge-{{ o.status }}">{{ o.status }}</span></td>
         <td class="ratings-cell">
           {% for domain, rating in o.ratings.items() %}
             <span class="rating rating-{{ rating|replace(' ', '-')|lower }}" title="{{ domain }}">{{ rating[:3]|upper }}</span>
           {% endfor %}
         </td>
-        <td><a class="button-link" href="/observations/{{ o.id }}">Open →</a></td>
+        <td><a class="button-link" href="/observations/{{ o.id }}">Open</a></td>
       </tr>
       {% endfor %}
     </tbody>
@@ -538,7 +549,7 @@
 {# ---- Rubric score history ---- #}
 {% if movement %}
 <section class="card">
-  <h2><svg class="icon"><use href="#icon-trend-up"/></svg>Rubric score history</h2>
+  <h2><svg class="icon"><use href="#icon-trend-up"/></svg>Where the rubric has read them, over time</h2>
   <table class="obs-table small">
     <thead>
       <tr>
@@ -549,7 +560,7 @@
     <tbody>
       {% for m in movement %}
       <tr>
-        <td class="muted small">{{ m.scored_at[:10] if m.scored_at else '—' }}</td>
+        <td class="muted small">{{ m.scored_at | warmdate if m.scored_at else '—' }}</td>
         {% for d in domains %}
           {% set r = m.ratings.get(d) %}
           <td>
@@ -571,25 +582,25 @@
 <details id="actions" class="deep-dive">
   <summary>
     <svg class="icon"><use href="#icon-action"/></svg>
-    <span class="dd-title">Open action follow-ups</span>
-    <span class="dd-count muted small">({{ open_actions|length }} awaiting)</span>
+    <span class="dd-title">Moves still to read</span>
+    <span class="dd-count muted small">({{ open_actions|length }} still open)</span>
   </summary>
   <div class="deep-dive-body">
 {% if open_actions %}
 <section class="card">
-  <p class="muted small">Bite-sized actions issued in prior observations that haven't been assessed for implementation yet.</p>
+  <p class="muted small">Moves you named at prior visits — waiting for you to read how each one landed.</p>
   <ul>
     {% for a in open_actions %}
     <li id="actions-{{ a.id }}">
       <strong>{{ a.core_teacher_skill }}</strong> <span class="muted small">({{ a.related_domain }})</span>
-      <div class="muted small">Issued {{ a.created_at[:10] }}</div>
+      <div class="muted small">Named {{ a.created_at | warmdate }}</div>
       <div>{{ a.bite_sized_action_text }}</div>
     </li>
     {% endfor %}
   </ul>
 </section>
 {% else %}
-<p class="muted">No open action follow-ups.</p>
+<p class="muted">No moves still open.</p>
 {% endif %}
   </div>
 </details>
@@ -598,13 +609,13 @@
 <details id="profile" class="deep-dive">
   <summary>
     <svg class="icon"><use href="#icon-teachers"/></svg>
-    <span class="dd-title">Profile — teacher &amp; coach sides</span>
+    <span class="dd-title">Profile — {{ teacher.name.split()[0] }}'s side &amp; yours</span>
   </summary>
   <div class="deep-dive-body">
 <section class="card">
   <div class="two-col">
     <div>
-      <h3>Teacher-authored</h3>
+      <h3>{{ teacher.name.split()[0] }}'s side</h3>
       {% if profile.years_teaching_total is not none %}
         <ul class="kv">
           <li><span>Years teaching</span> <strong>{{ profile.years_teaching_total }}</strong></li>
@@ -616,7 +627,7 @@
           {% if profile.coaching_style_preference %}<li><span>Coaching style pref.</span> <strong>{{ profile.coaching_style_preference }}</strong></li>{% endif %}
         </ul>
         {% if profile.self_ratings %}
-        <h4>Self-ratings</h4>
+        <h4>How {{ teacher.name.split()[0] }} sees themselves</h4>
         <ul class="kv">
           {% for dim in self_rating_dimensions %}
             {% if dim in profile.self_ratings %}
@@ -625,13 +636,13 @@
           {% endfor %}
         </ul>
         {% endif %}
-        {% if profile.career_narrative_notes %}<p><em>Narrative:</em> {{ profile.career_narrative_notes }}</p>{% endif %}
-        {% if profile.career_goals_notes %}<p><em>Career goals:</em> {{ profile.career_goals_notes }}</p>{% endif %}
+        {% if profile.career_narrative_notes %}<p><em>In their words:</em> {{ profile.career_narrative_notes }}</p>{% endif %}
+        {% if profile.career_goals_notes %}<p><em>Where they want to go:</em> {{ profile.career_goals_notes }}</p>{% endif %}
       {% else %}
         <div class="empty-cta compact warm">
           <span class="empty-cta-icon"><svg class="icon"><use href="#icon-teachers"/></svg></span>
           <h3>{{ teacher.name.split()[0] }} hasn't shared their side yet</h3>
-          <p>Years teaching, credentials, self-ratings, coaching-style preference — {{ teacher.name.split()[0] }}'s own words help the coaching land better. Invite them to fill it in, or capture it together at your next debrief.</p>
+          <p>Years teaching, credentials, self-ratings, how they like to be coached — {{ teacher.name.split()[0] }}'s own words help the coaching land better. Ask them to fill it in, or capture it together at your next debrief.</p>
           <a class="button-link" href="/teachers/{{ teacher.id }}/profile/teacher">
             <svg class="icon icon-sm"><use href="#icon-arrow-right"/></svg>Open {{ teacher.name.split()[0] }}'s side
           </a>
@@ -639,12 +650,12 @@
       {% endif %}
     </div>
     <div>
-      <h3>Coach-authored (visible to teacher)</h3>
+      <h3>Your side (visible to {{ teacher.name.split()[0] }})</h3>
       {% if profile.coach_notes_on_teacher or profile.observed_style_notes or profile.coach_ratings %}
-        {% if profile.observed_style_notes %}<p><em>Observed style:</em> {{ profile.observed_style_notes }}</p>{% endif %}
-        {% if profile.coach_notes_on_teacher %}<p><em>Notes:</em> {{ profile.coach_notes_on_teacher }}</p>{% endif %}
+        {% if profile.observed_style_notes %}<p><em>What you notice in the room:</em> {{ profile.observed_style_notes }}</p>{% endif %}
+        {% if profile.coach_notes_on_teacher %}<p><em>Your notes:</em> {{ profile.coach_notes_on_teacher }}</p>{% endif %}
         {% if profile.coach_ratings %}
-        <h4>Coach ratings</h4>
+        <h4>How you see them</h4>
         <ul class="kv">
           {% for dim in self_rating_dimensions %}
             {% if dim in profile.coach_ratings %}
@@ -655,8 +666,8 @@
                 <strong>
                   {{ cr }}/5
                   {% if sr and (cr - sr) != 0 %}
-                    <span class="trend trend-{{ 'up' if cr > sr else 'down' }}" title="Gap vs. teacher self-rating">
-                      ({{ '%+d'|format(cr - sr) }} vs self)
+                    <span class="trend trend-{{ 'up' if cr > sr else 'down' }}" title="Gap vs. how {{ teacher.name.split()[0] }} rated themselves">
+                      ({{ '%+d'|format(cr - sr) }} vs {{ teacher.name.split()[0] }})
                     </span>
                   {% endif %}
                 </strong>
@@ -672,10 +683,10 @@
       {% else %}
         <div class="empty-cta compact warm">
           <span class="empty-cta-icon"><svg class="icon"><use href="#icon-check"/></svg></span>
-          <h3>Add your view of {{ teacher.name.split()[0] }}</h3>
-          <p>The gap between how you see them and how they see themselves is a coaching conversation waiting to happen. Your ratings + narrative shape the AI's context.</p>
+          <h3>Add your read on {{ teacher.name.split()[0] }}</h3>
+          <p>The gap between how you see {{ teacher.name.split()[0] }} and how they see themselves is often the coaching conversation waiting to happen. What you write here also shapes what the AI reads next time.</p>
           <a class="button-link" href="/teachers/{{ teacher.id }}/profile/coach">
-            <svg class="icon icon-sm"><use href="#icon-arrow-right"/></svg>Add your view
+            <svg class="icon icon-sm"><use href="#icon-arrow-right"/></svg>Add your read
           </a>
         </div>
       {% endif %}
@@ -690,7 +701,7 @@
 <details id="cycles" class="deep-dive">
   <summary>
     <svg class="icon"><use href="#icon-cycle"/></svg>
-    <span class="dd-title">Cycle history &amp; open a new cycle</span>
+    <span class="dd-title">Cycle history &amp; start a new one</span>
     <span class="dd-count muted small">({{ (closed_cycles|length) + (active_cycles|length) }} total)</span>
   </summary>
   <div class="deep-dive-body">
@@ -701,36 +712,36 @@
       {% for c in closed_cycles %}
       <li>
         <a href="/cycles/{{ c.id }}">{{ c.notes.splitlines()[0] if c.notes else 'Coaching cycle' }}</a>
-        — opened {{ c.opened_at[:10] }} / closed {{ c.closed_at[:10] }}
+        — opened {{ c.opened_at | warmdate }} / closed {{ c.closed_at | warmdate }}
       </li>
       {% endfor %}
     </ul>
   {% elif not active_cycles %}
     <div class="empty-cta compact">
       <span class="empty-cta-icon"><svg class="icon"><use href="#icon-cycle"/></svg></span>
-      <h3>Ready to open the first coaching cycle</h3>
-      <p>A cycle is a bounded coaching arc — usually 3 weeks — where observations, goals, and bite-sized actions cluster together. Opening one puts the practice on a rhythm.</p>
+      <h3>Ready to start the first coaching cycle</h3>
+      <p>A cycle is a bounded coaching arc — usually 3 weeks — where observations, goals, and moves cluster together. Starting one puts the practice on a rhythm.</p>
     </div>
   {% endif %}
 
   {% if active_cycles %}
     <p class="muted small">
-      One active cycle at a time. Close the current cycle before opening a new one.
+      One active cycle at a time. Close the current cycle before starting a new one.
     </p>
   {% else %}
   <details class="add-form">
-    <summary>+ Open a new cycle</summary>
+    <summary>+ Start a new cycle</summary>
     <form method="post" action="/teachers/{{ teacher.id }}/cycles">
       <label>Title
         <input type="text" name="title" placeholder="e.g. Fall discourse cycle" required>
       </label>
-      <label>Expected close date <span class="muted small">(leave blank for default 21 days out)</span>
+      <label>Aim for a close date <span class="muted small">(leave blank for 21 days out)</span>
         <input type="date" name="expected_close_date">
       </label>
       <label>Notes (optional)
-        <textarea name="notes" rows="3" placeholder="Kick-off notes: focus, expected duration, agreements."></textarea>
+        <textarea name="notes" rows="3" placeholder="Kick-off notes: focus, how long you're aiming for, what you two agreed."></textarea>
       </label>
-      <button type="submit">Open cycle</button>
+      <button type="submit">Start the cycle</button>
     </form>
   </details>
   {% endif %}
@@ -749,9 +760,9 @@
 <section class="card">
   <div class="section-header">
     <h2 style="display:none;">Lesson plans</h2>
-    <a class="button-link" href="/teachers/{{ teacher.id }}/lesson-plans">Open plans →</a>
+    <a class="button-link" href="/teachers/{{ teacher.id }}/lesson-plans">Open plans</a>
   </div>
-  <p class="muted small">Upload plans, revise, and thread feedback with the coach.</p>
+  <p class="muted small">{{ teacher.name.split()[0] }}'s plans — where they send them in, revise, and thread feedback with you.</p>
 </section>
 
   </div>
@@ -766,15 +777,15 @@
   </summary>
   <div class="deep-dive-body">
     <p class="muted small">
-      Micro-attempts recorded between observations. Deliberate practice needs
-      shorter feedback loops than the 3-week cycle — this is where the teacher
-      (or you, on their behalf) records what happened between visits.
+      Micro-attempts between observations. Deliberate practice needs shorter feedback loops
+      than the 3-week cycle — this is where {{ teacher.name.split()[0] }} (or you, on their behalf)
+      records what happened between visits.
     </p>
     {% if practice_log %}
       {% set _cycle_group = namespace(last=None) %}
       <ul class="practice-log-list">
         {% for e in practice_log %}
-        {% set _title = e.cycle_title or 'Not attached to a cycle' %}
+        {% set _title = e.cycle_title or 'Not tied to a cycle' %}
         {% if _title != _cycle_group.last %}
           <li class="practice-log-divider">{{ _title }}{% if e.cycle_closed_at %} <span class="muted small">· closed</span>{% endif %}</li>
           {% set _cycle_group.last = _title %}
@@ -782,9 +793,9 @@
         <li class="practice-log-item practice-log-{{ e.created_by_role }}">
           <div class="practice-log-head">
             <span class="pill" style="background: {% if e.created_by_role == 'teacher' %}var(--warm-bg); color: var(--warm-strong){% else %}var(--accent-tint); color: var(--accent-deep){% endif %};">
-              {{ e.created_by_role }}
+              {{ 'from ' + teacher.name.split()[0] if e.created_by_role == 'teacher' else 'from you' }}
             </span>
-            <span class="muted small">{{ e.created_at[:16] }}</span>
+            <span class="muted small">{{ e.created_at | warmdatetime }}</span>
             {% if e.action_skill %}
             <span class="muted small">· on <em>{{ e.action_skill }}</em></span>
             {% endif %}
@@ -796,17 +807,17 @@
     {% else %}
       <div class="empty-cta compact">
         <span class="empty-cta-icon"><svg class="icon"><use href="#icon-action"/></svg></span>
-        <h3>No entries yet</h3>
-        <p>The practice log is the deliberate-practice diary — a note when {{ teacher.name.split()[0] }} tries the current bite-sized action between visits. The more that lands here, the more you have to talk about at debrief.</p>
+        <h3>Nothing yet</h3>
+        <p>The practice log is the deliberate-practice diary — a note each time {{ teacher.name.split()[0] }} tries the current move between visits. The more that lands here, the more you have to sit with at the debrief.</p>
       </div>
     {% endif %}
     <details class="add-form">
-      <summary>+ Add a practice-log entry (as coach, on {{ teacher.name.split()[0] }}'s behalf)</summary>
+      <summary>+ Add a note (on {{ teacher.name.split()[0] }}'s behalf)</summary>
       <form method="post" action="/teachers/{{ teacher.id }}/practice-log">
         {% if open_actions %}
-        <label>Tie to which action? (optional)
+        <label>Tie it to a move? (optional)
           <select name="action_id">
-            <option value="">— not tied to a specific action —</option>
+            <option value="">— not tied to a specific move —</option>
             {% for a in open_actions %}
             <option value="{{ a.id }}" {{ 'selected' if loop.first }}>{{ a.core_teacher_skill }} · {{ a.related_domain }}</option>
             {% endfor %}
@@ -816,7 +827,7 @@
         <label>What happened?
           <textarea name="entry_text" rows="3" required placeholder="e.g. 'Tried the sentence-stem in period 3 today — got 4 clean student-to-student exchanges. Period 4 flopped: kids were tired.'"></textarea>
         </label>
-        <button type="submit">Save entry</button>
+        <button type="submit">Save the note</button>
       </form>
     </details>
   </div>
@@ -826,17 +837,17 @@
 <details id="notes" class="deep-dive">
   <summary>
     <svg class="icon"><use href="#icon-check"/></svg>
-    <span class="dd-title">Coach private notes</span>
-    <span class="pill pill-private">coach-only</span>
+    <span class="dd-title">Your private notes on {{ teacher.name.split()[0] }}</span>
+    <span class="pill pill-private">just for you</span>
     <span class="dd-count muted small">({{ private_notes|length }} note{{ 's' if private_notes|length != 1 }})</span>
   </summary>
   <div class="deep-dive-body">
 <section class="card">
-  <p class="muted small">Not visible to the teacher or to admins. This is your scratchpad.</p>
+  <p class="muted small">{{ teacher.name.split()[0] }} doesn't see these, and neither do admins. This is your scratchpad.</p>
   {% if private_notes %}
     {% for n in private_notes %}
     <div class="note">
-      <div class="muted small">{{ n.created_at[:16] }}{% if n.observation_id %} · linked to observation{% endif %}</div>
+      <div class="muted small">{{ n.created_at | warmdatetime }}{% if n.observation_id %} · tied to an observation{% endif %}</div>
       <div>{{ n.body }}</div>
     </div>
     {% endfor %}
@@ -851,8 +862,8 @@
   <details class="add-form">
     <summary>+ Add a private note</summary>
     <form method="post" action="/teachers/{{ teacher.id }}/private-notes">
-      <label>Body <textarea name="body" rows="3" required></textarea></label>
-      <button type="submit">Save note</button>
+      <label>What are you noticing? <textarea name="body" rows="3" required></textarea></label>
+      <button type="submit">Save the note</button>
     </form>
   </details>
 </section>

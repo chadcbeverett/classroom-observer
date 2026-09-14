@@ -4,8 +4,8 @@
 
 <div class="page-header">
   <div>
-    <h1><svg class="icon icon-lg"><use href="#icon-teachers"/></svg>Teachers</h1>
-    <p class="muted">Roster with trend indicators per rubric domain.</p>
+    <h1><svg class="icon icon-lg"><use href="#icon-teachers"/></svg>Teachers on your caseload</h1>
+    <p class="muted">Where each of them is, per rubric domain.</p>
   </div>
   <div class="page-header-meta">
     <span class="count-chip">{{ teachers|length }} teacher{{ 's' if teachers|length != 1 }}</span>
@@ -16,9 +16,9 @@
   <div class="empty-cta">
     <span class="empty-cta-icon"><svg class="icon"><use href="#icon-teachers"/></svg></span>
     <h3>No teachers yet</h3>
-    <p>Upload an observation to add a teacher automatically.</p>
+    <p>Bring in an observation and a teacher will be added along with it.</p>
     <a class="button-link" href="/observations">
-      <svg class="icon icon-sm"><use href="#icon-arrow-right"/></svg>Upload observation
+      <svg class="icon icon-sm"><use href="#icon-arrow-right"/></svg>Bring in an observation
     </a>
   </div>
 {% else %}
@@ -29,12 +29,12 @@
       <th></th>
       <th>Teacher</th>
       <th>Observations</th>
-      <th>Last scored</th>
+      <th>Last read</th>
       {% for d in domains %}
       <th title="{{ d }}">{{ d.split(' ')[0][:3]|upper }}</th>
       {% endfor %}
       <th>Goals</th>
-      <th>Actions</th>
+      <th>Moves</th>
       <th></th>
     </tr>
   </thead>
@@ -48,7 +48,7 @@
       </td>
       <td><a href="/teachers/{{ t.id }}" class="row-title">{{ t.name }}</a></td>
       <td>{{ t.obs_count }}</td>
-      <td class="muted small">{{ t.last_scored }}</td>
+      <td class="muted small">{{ t.last_scored | warmdate }}</td>
       {% for d in domains %}
         {% set td = t.trend_by_domain[d] %}
         <td>
@@ -64,7 +64,7 @@
       {% endfor %}
       <td>{{ t.active_goal_count }}</td>
       <td>{{ t.open_action_count }}</td>
-      <td><a class="button-link" href="/teachers/{{ t.id }}">Open →</a></td>
+      <td><a class="button-link" href="/teachers/{{ t.id }}">Open</a></td>
     </tr>
     {% endfor %}
   </tbody>

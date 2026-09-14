@@ -4,8 +4,8 @@
 
 <div class="page-header">
   <div>
-    <h1><svg class="icon icon-lg"><use href="#icon-district"/></svg>District dashboard</h1>
-    <p class="muted">School-by-school comparison and initiative tracking · academic year {{ academic_year }}</p>
+    <h1><svg class="icon icon-lg"><use href="#icon-district"/></svg>How the district is doing</h1>
+    <p class="muted">School-by-school, and how your priorities are landing in classrooms · academic year {{ academic_year }}</p>
   </div>
   <div class="page-header-meta">
     <a class="button-link secondary" href="/compliance">
@@ -26,14 +26,14 @@
     <div class="stat-value">{{ total_teachers }}</div>
   </div>
   <div class="stat-card">
-    <div class="stat-label"><svg class="icon"><use href="#icon-cycle"/></svg>Active cycles</div>
+    <div class="stat-label"><svg class="icon"><use href="#icon-cycle"/></svg>Cycles in play</div>
     <div class="stat-value">{{ total_active_cycles }}</div>
   </div>
 </section>
 
 {# ---- Section 1: School comparison ---- #}
 <div class="section-title-row">
-  <h2><svg class="icon"><use href="#icon-district"/></svg>School-by-school comparison</h2>
+  <h2><svg class="icon"><use href="#icon-district"/></svg>Side-by-side, school to school</h2>
 </div>
 {% if schools %}
 <section class="card" style="padding: 0; overflow: hidden;">
@@ -42,10 +42,10 @@
     <tr>
       <th>School</th>
       <th>Teachers</th>
-      <th>Complete observations</th>
-      <th>Active cycles</th>
-      <th>Moves published</th>
-      <th>Weakest domain</th>
+      <th>Observations closed</th>
+      <th>Cycles in play</th>
+      <th>Moves named</th>
+      <th>Where it's tightest</th>
     </tr>
   </thead>
   <tbody>
@@ -59,7 +59,7 @@
       <td>
         {% if s.weakest_domain %}
           <span class="pill pill-impl-partial">{{ s.weakest_domain }}</span>
-          <span class="muted small">{{ s.weak_pct }}% weak</span>
+          <span class="muted small">{{ s.weak_pct }}% reading weak</span>
         {% else %}
           <span class="muted small">—</span>
         {% endif %}
@@ -71,7 +71,7 @@
 </section>
 {% if schools|length == 1 %}
 <div class="muted small" style="margin-top: 8px;">
-  Only one school on record. When your district adds more schools, they appear here for side-by-side comparison.
+  One school on record. When your district adds more, they line up here side by side.
 </div>
 {% endif %}
 {% else %}
@@ -83,7 +83,7 @@
 
 {# ---- Section 2: District priorities in force ---- #}
 <div class="section-title-row">
-  <h2><svg class="icon"><use href="#icon-sparkle"/></svg>District priorities in force</h2>
+  <h2><svg class="icon"><use href="#icon-sparkle"/></svg>What the district is asking teachers to work on</h2>
 </div>
 <section class="district-priorities">
   <div class="district-priorities-panel">
@@ -108,7 +108,7 @@
     {% else %}
       <div class="muted small">
         No year arc on file for {{ academic_year }}.
-        <a href="/admin/district-context">Configure the district context →</a>
+        <a href="/admin/district-context">Set up the district context →</a>
       </div>
     {% endif %}
   </div>
@@ -116,7 +116,7 @@
   <div class="district-priorities-panel">
     <h3 class="prep-panel-title">
       <svg class="icon"><use href="#icon-lesson-plan"/></svg>
-      Uploaded documents ({{ district_docs|length }})
+      Documents in the AI's context ({{ district_docs|length }})
     </h3>
     {% if district_docs %}
       <ul class="tv-simple-list">
@@ -125,15 +125,15 @@
           <div>
             <strong>{{ d.title }}</strong>
             {% if d.doc_type %}<span class="pill" style="margin-left: 6px;">{{ d.doc_type|replace('_', ' ') }}</span>{% endif %}
-            <div class="muted small">{{ d.original_filename }} · uploaded {{ d.uploaded_at[:10] }}</div>
+            <div class="muted small">{{ d.original_filename }} · brought in {{ d.uploaded_at | warmdate }}</div>
           </div>
         </li>
         {% endfor %}
       </ul>
     {% else %}
       <div class="muted small">
-        No district documents uploaded yet.
-        <a href="/admin/district-context">Upload from the district context page →</a>
+        No documents brought in yet.
+        <a href="/admin/district-context">Add one from the district context page →</a>
       </div>
     {% endif %}
   </div>
@@ -141,12 +141,12 @@
 
 {# ---- Section 3: Initiative engagement ---- #}
 <div class="section-title-row">
-  <h2><svg class="icon"><use href="#icon-trend-up"/></svg>Initiative engagement</h2>
+  <h2><svg class="icon"><use href="#icon-trend-up"/></svg>How the priorities are landing in classrooms</h2>
 </div>
 <section class="card">
   {% if engagement %}
     <p class="muted small">
-      Rough measure: how many active teacher goals mention keywords drawn from your district documents and year-arc phase names.
+      A rough read: how many teacher goals in play name each priority, or mention keywords drawn from your district documents and year-arc phase names.
       Scanned {{ keywords_scanned }} keyword{{ 's' if keywords_scanned != 1 }} from your district context.
     </p>
     <ul class="engagement-list">
@@ -160,35 +160,35 @@
         </div>
         <span class="muted small">
           {% if e.kind == 'priority' %}
-            {{ e.goal_matches }} goal{{ 's' if e.goal_matches != 1 }} tagged
+            {{ e.goal_matches }} goal{{ 's' if e.goal_matches != 1 }} name this priority
             {% if e.closed_met %} · <span style="color:#1c4d1e;font-weight:600;">{{ e.closed_met }} met</span>{% endif %}
             {% if e.closed_partial %} · {{ e.closed_partial }} partial{% endif %}
           {% elif e.kind == 'retired_priority' %}
-            {{ e.goal_matches }} goal{{ 's' if e.goal_matches != 1 }} historically tagged
+            {{ e.goal_matches }} goal{{ 's' if e.goal_matches != 1 }} still tied to this (retired) priority
             {% if e.closed_met %} · <span style="color:#1c4d1e;font-weight:600;">{{ e.closed_met }} met</span>{% endif %}
             {% if e.closed_partial %} · {{ e.closed_partial }} partial{% endif %}
           {% else %}
-            {{ e.goal_matches }} untagged goal{{ 's' if e.goal_matches != 1 }} mentioning
+            {{ e.goal_matches }} goal{{ 's' if e.goal_matches != 1 }} mention
           {% endif %}
         </span>
       </li>
       {% endfor %}
     </ul>
     <p class="muted small" style="margin-top: 14px;">
-      <em>Note:</em> keyword-matching is a rough proxy. A future version could tag each district document with themes and track engagement more precisely — including by school and by coach.
+      <em>Note:</em> keyword-matching is a rough read. A future version could tag each district document by theme and follow how each one lands more precisely — including by school and by coach.
     </p>
   {% elif keywords_scanned %}
     <p class="muted">
-      No active teacher goals currently mention any of the {{ keywords_scanned }} keywords drawn from district context.
-      Either the goals aren't yet aligned to district priorities, or the keywords aren't representative.
+      No goals in play currently mention any of the {{ keywords_scanned }} keywords drawn from your district context.
+      Either the goals aren't tied to district priorities yet, or the keywords aren't the ones that show up in coach-and-teacher language.
     </p>
   {% else %}
     <div class="empty-cta compact">
       <span class="empty-cta-icon"><svg class="icon"><use href="#icon-sparkle"/></svg></span>
-      <h3>No initiatives to track</h3>
-      <p>Upload district documents and set the year arc, then this section shows how well teacher goals align to your priorities.</p>
+      <h3>Nothing to follow yet</h3>
+      <p>Bring in district documents and set the year arc — then this section shows how well the goals coaches are naming line up with what the district is asking for.</p>
       <a class="button-link" href="/admin/district-context">
-        <svg class="icon icon-sm"><use href="#icon-arrow-right"/></svg>Configure district context
+        <svg class="icon icon-sm"><use href="#icon-arrow-right"/></svg>Set up district context
       </a>
     </div>
   {% endif %}

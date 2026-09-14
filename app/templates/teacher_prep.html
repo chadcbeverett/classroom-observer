@@ -5,6 +5,19 @@
 {% set _avatar_palette = ['blue', 'teal', 'amber', 'plum', 'green', 'rose'] %}
 {% set _avatar_class = _avatar_palette[avatar_idx % 6] %}
 
+{% set _impl_labels = {
+  'full': 'landed full',
+  'partial': 'landed partial',
+  'not_observed': "didn't see it",
+  'regressed': 'went the other way',
+} %}
+{% set _plan_status_labels = {
+  'submitted': 'in for your read',
+  'coach_reviewed': 'you\'ve looked',
+  'approved': 'ready to teach',
+  'archived': 'archived',
+} %}
+
 <p class="crumbs"><a href="/teachers/{{ teacher.id }}">← {{ teacher.name }}</a></p>
 
 {# ---- Hero: what you're walking into ---- #}
@@ -15,14 +28,14 @@
       <svg class="icon icon-sm"><use href="#icon-clock"/></svg>
       Prep · 30-second glance
     </div>
-    <h1>Entering {{ teacher.first }}'s classroom</h1>
+    <h1>Walking into {{ teacher.first }}'s room</h1>
     <p class="teacher-hero-summary">
       {% if active_cycle and cycle_prog %}
         Week <strong>{{ cycle_prog.week_current }} of {{ cycle_prog.week_total }}</strong>
         of the {{ (active_cycle.notes.splitlines()[0] if active_cycle.notes else 'current cycle')|lower }}
-        {% if cycle_prog.days_remaining >= 0 %} · {{ cycle_prog.days_remaining }} day{{ 's' if cycle_prog.days_remaining != 1 }} remaining{% endif %}
+        {% if cycle_prog.days_remaining >= 0 %} · {{ cycle_prog.days_remaining }} day{{ 's' if cycle_prog.days_remaining != 1 }} to go{% endif %}
       {% else %}
-        No active cycle in flight.
+        No cycle in play right now.
       {% endif %}
     </p>
   </div>
@@ -38,20 +51,20 @@
 
     {% if current_move %}
     <div class="prep-block prep-block-move">
-      <div class="prep-block-label">Your published move</div>
+      <div class="prep-block-label">The move you brought</div>
       <p class="prep-block-body">{{ current_move.move_text }}</p>
-      <div class="muted small">Published {{ current_move.published_at[:16] }}</div>
+      <div class="muted small">Sent {{ current_move.published_at | warmdatetime }}</div>
     </div>
     {% endif %}
 
     {% if current_action %}
     <div class="prep-block prep-block-action">
       <div class="prep-block-label">
-        Bite-sized action
+        Bite-sized move
         {% if current_action.implementation %}
-          <span class="pill pill-impl-{{ current_action.implementation }}">{{ current_action.implementation|replace('_', ' ') }}</span>
+          <span class="pill pill-impl-{{ current_action.implementation }}">{{ _impl_labels.get(current_action.implementation, current_action.implementation|replace('_', ' ')) }}</span>
         {% else %}
-          <span class="pill">unassessed</span>
+          <span class="pill">still to read</span>
         {% endif %}
       </div>
       <p class="prep-block-body">{{ current_action.bite_sized_action_text }}</p>
@@ -69,7 +82,7 @@
 
     {% if active_goal %}
     <div class="prep-block prep-block-goal">
-      <div class="prep-block-label">Active goal</div>
+      <div class="prep-block-label">Goal in play</div>
       <div class="prep-block-body"><strong>{{ active_goal.title }}</strong></div>
       {% if active_goal.description %}<p class="muted small">{{ active_goal.description }}</p>{% endif %}
       {% if active_goal.releasing %}
@@ -79,7 +92,7 @@
       </div>
       {% endif %}
       {% if active_goal.success_indicators %}
-      <div class="muted small" style="margin-top: 6px;">Signals:</div>
+      <div class="muted small" style="margin-top: 6px;">Signals we're looking for:</div>
       <ul class="prep-signals">
         {% for s in active_goal.success_indicators %}<li>{{ s }}</li>{% endfor %}
       </ul>
@@ -90,8 +103,8 @@
     {% if not current_move and not current_action and not active_goal %}
     <div class="empty-cta compact">
       <span class="empty-cta-icon"><svg class="icon"><use href="#icon-goal"/></svg></span>
-      <h3>Nothing on the practice board yet</h3>
-      <p>Once {{ teacher.first }} has a goal and you've published a coaching move, they'll show here.</p>
+      <h3>Nothing named yet</h3>
+      <p>Once {{ teacher.first }} has a goal and you've named a move, they'll show here.</p>
     </div>
     {% endif %}
   </div>
@@ -107,7 +120,7 @@
     <div class="empty-cta compact">
       <span class="empty-cta-icon"><svg class="icon"><use href="#icon-lesson-plan"/></svg></span>
       <h3>No lesson plans on file</h3>
-      <p>{{ teacher.first }} hasn't uploaded a plan yet. Ask for one before the observation, or walk in unprimed.</p>
+      <p>{{ teacher.first }} hasn't sent one in yet. Ask for one before the visit, or walk in unprimed.</p>
       <a class="button-link" href="/teachers/{{ teacher.id }}/lesson-plans">
         <svg class="icon icon-sm"><use href="#icon-arrow-right"/></svg>Open plans page
       </a>
@@ -120,14 +133,14 @@
         <a href="/lesson-plans/{{ p.id }}" class="prep-plan-link">
           <div class="prep-plan-title">{{ p.title }}</div>
           <div class="prep-plan-meta">
-            <span class="pill pill-{{ p.status }}">{{ p.status|replace('_', ' ') }}</span>
+            <span class="pill pill-{{ p.status }}">{{ _plan_status_labels.get(p.status, p.status|replace('_', ' ')) }}</span>
             <span class="muted small">v{{ p.current_version }}</span>
             {% if p.plan_start_date %}
               <span class="muted small">
-                {{ p.plan_start_date }}{% if p.plan_end_date and p.plan_end_date != p.plan_start_date %} – {{ p.plan_end_date }}{% endif %}
+                {{ p.plan_start_date | warmdate }}{% if p.plan_end_date and p.plan_end_date != p.plan_start_date %} – {{ p.plan_end_date | warmdate }}{% endif %}
               </span>
             {% endif %}
-            <span class="muted small">updated {{ p.last_touched[:10] }}</span>
+            <span class="muted small">last touched {{ p.last_touched | warmdate }}</span>
           </div>
         </a>
       </li>
@@ -147,7 +160,7 @@
   </a>
   <a class="button-link" href="/observations">
     <svg class="icon icon-sm"><use href="#icon-observations"/></svg>
-    After observation: upload video →
+    After the visit: bring in the video →
   </a>
 </div>
 

@@ -13,7 +13,7 @@
 <div class="page-header">
   <div>
     <h1><svg class="icon icon-lg"><use href="#icon-observations"/></svg>Observations</h1>
-    <p class="muted">Video, transcript, and Claude-scored report per session.</p>
+    <p class="muted">Every classroom visit — video, transcript, and the AI's rubric read.</p>
   </div>
   <div class="page-header-meta">
     <span class="count-chip">{{ observations|length }} total</span>
@@ -21,10 +21,10 @@
 </div>
 
 <section class="card">
-  <h2><svg class="icon icon-sm"><use href="#icon-video"/></svg>New observation</h2>
+  <h2><svg class="icon icon-sm"><use href="#icon-video"/></svg>Bring in a new observation</h2>
   <form method="post" action="/upload" enctype="multipart/form-data">
     <div class="row">
-      <label>Teacher name
+      <label>Teacher's name
         <input type="text" name="teacher_name" required placeholder="e.g., Ms. Rivera">
       </label>
       <label>Rubric
@@ -43,30 +43,30 @@
       </label>
     </div>
     <div class="row">
-      <label>Observation date
+      <label>When you watched
         <input type="date" name="observed_at" value="{{ today }}" max="{{ today }}">
       </label>
       <label class="grow">Video file
         <input type="file" name="video" accept="video/*" required>
       </label>
-      <button type="submit">Upload &amp; score</button>
+      <button type="submit">Bring it in</button>
     </div>
     <p class="muted small" style="margin-top: -4px;">
-      When did the lesson happen? Defaults to today; change if you're uploading later.
-      Lesson-plan attachment happens on the observation page after scoring.
+      When did the lesson happen? Defaults to today; change it if you're bringing it in later.
+      Tie a lesson plan to it on the observation page after the AI reads it.
     </p>
   </form>
 </section>
 
 <div class="section-title-row">
-  <h2><svg class="icon"><use href="#icon-cycle"/></svg>Past observations</h2>
+  <h2><svg class="icon"><use href="#icon-cycle"/></svg>Past visits</h2>
 </div>
 
 {% if not observations %}
   <div class="empty-cta">
     <span class="empty-cta-icon"><svg class="icon"><use href="#icon-observations"/></svg></span>
     <h3>No observations yet</h3>
-    <p>Upload a video with the form above to get your first rubric-scored report and coaching recommendations.</p>
+    <p>Bring in a video above to get your first rubric read and coaching recommendations.</p>
   </div>
 {% else %}
 <section class="card" style="padding: 0; overflow: hidden;">
@@ -76,9 +76,9 @@
       <th></th>
       <th>Teacher</th>
       <th>Video</th>
-      <th>Duration</th>
-      <th>Uploaded</th>
-      <th>Status</th>
+      <th>Length</th>
+      <th>Watched</th>
+      <th>Where it's at</th>
       <th>Ratings</th>
       <th></th>
     </tr>
@@ -94,7 +94,7 @@
       <td><strong>{{ o.teacher }}</strong></td>
       <td class="mono truncate">{{ o.video_filename }}</td>
       <td class="muted small">{{ o.duration }}</td>
-      <td class="muted small">{{ o.uploaded_at }}</td>
+      <td class="muted small">{{ o.uploaded_at | warmdatetime }}</td>
       <td>
         <span class="badge badge-{{ o.status }}">{{ o.status }}</span>
         {% if o.failure_reason %}
@@ -106,7 +106,7 @@
           <span class="rating rating-{{ rating|replace(' ', '-')|lower }}" title="{{ domain }}">{{ rating[:3]|upper }}</span>
         {% endfor %}
       </td>
-      <td><a class="button-link" href="/observations/{{ o.id }}">Open →</a></td>
+      <td><a class="button-link" href="/observations/{{ o.id }}">Open</a></td>
     </tr>
     {% endfor %}
   </tbody>

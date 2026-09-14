@@ -25,10 +25,10 @@
     <h1>{{ teacher.name }}</h1>
     <p class="teacher-hero-summary">
       {% if side == 'teacher' %}
-        Quantitative facts and self-ratings supplied by the teacher.
+        How you'd describe yourself and how you'd rate yourself right now.
       {% else %}
-        Coach's public observations. <strong>Visible to the teacher.</strong>
-        For private working-theory notes, use the private-notes section on the teacher page.
+        Your public read on {{ teacher.name.split()[0] }}. <strong>{{ teacher.name.split()[0] }} sees this.</strong>
+        Your private working-theory notes live on the scratchpad on {{ teacher.name.split()[0] }}'s page.
       {% endif %}
     </p>
   </div>
@@ -80,8 +80,8 @@
 
     {# --- Self-ratings --- #}
     <section class="card profile-form">
-      <h2><svg class="icon icon-sm"><use href="#icon-goal"/></svg>Self-ratings (1–5)</h2>
-      <p class="muted small">Rate your own comfort/effectiveness on each dimension. Your coach uses this to calibrate feedback framing.</p>
+      <h2><svg class="icon icon-sm"><use href="#icon-goal"/></svg>How you see yourself (1–5)</h2>
+      <p class="muted small">Rate your own comfort on each. Your coach uses this to fit their feedback to where you are right now.</p>
       <div class="row">
         {% for dim in self_rating_dimensions %}
         <label>{{ dim|replace('_', ' ')|title }}
@@ -99,29 +99,29 @@
 
     {# --- Preferences & context --- #}
     <section class="card profile-form">
-      <h2><svg class="icon icon-sm"><use href="#icon-sparkle"/></svg>Preferences and context</h2>
+      <h2><svg class="icon icon-sm"><use href="#icon-sparkle"/></svg>How you like to be coached</h2>
       {% set style = profile.coaching_style_preference or '' %}
       {% set known_styles = ['direct', 'warm', 'socratic', 'structured', 'collaborative'] %}
-      <label>Coaching-style preference
+      <label>The style you gravitate toward
         <select name="coaching_style_preference_select"
                 onchange="document.getElementById('style-other').style.display = this.value === 'other' ? 'flex' : 'none';">
           <option value="" {{ 'selected' if not style }}>—</option>
           {% for s in known_styles %}
           <option value="{{ s }}" {{ 'selected' if style == s }}>{{ s }}</option>
           {% endfor %}
-          <option value="other" {{ 'selected' if style and style not in known_styles }}>other (specify)</option>
+          <option value="other" {{ 'selected' if style and style not in known_styles }}>other (say what)</option>
         </select>
       </label>
       <label id="style-other" style="display: {{ 'flex' if style and style not in known_styles else 'none' }};">
-        Or specify
+        Or say what
         <input type="text" name="coaching_style_preference_other"
                value="{{ style if style not in known_styles else '' }}">
       </label>
-      <label>Career narrative
+      <label>In your own words
         <textarea name="career_narrative_notes" rows="3"
-                  placeholder="Brief context about your teaching trajectory (career switcher, second-generation teacher, etc.)">{{ profile.career_narrative_notes or '' }}</textarea>
+                  placeholder="A little about your teaching trajectory — career switcher, second-generation teacher, whatever helps them see you.">{{ profile.career_narrative_notes or '' }}</textarea>
       </label>
-      <label>Career goals
+      <label>Where you want to go
         <textarea name="career_goals_notes" rows="3"
                   placeholder="Where do you want to grow this year? Long-term?">{{ profile.career_goals_notes or '' }}</textarea>
       </label>
@@ -131,37 +131,37 @@
 
     {# --- Coach observations --- #}
     <section class="card profile-form">
-      <h2><svg class="icon icon-sm"><use href="#icon-observations"/></svg>Coach observations</h2>
-      <p class="muted small">Visible to the teacher.</p>
-      <label>Observed style / classroom presence
+      <h2><svg class="icon icon-sm"><use href="#icon-observations"/></svg>What you notice</h2>
+      <p class="muted small">{{ teacher.name.split()[0] }} sees this.</p>
+      <label>How {{ teacher.name.split()[0] }} shows up in the room
         <textarea name="observed_style_notes" rows="3"
-                  placeholder="What you've noticed about how this teacher operates in the classroom.">{{ profile.observed_style_notes or '' }}</textarea>
+                  placeholder="What you notice about how {{ teacher.name.split()[0] }} operates in the classroom.">{{ profile.observed_style_notes or '' }}</textarea>
       </label>
-      <label>Notes on the teacher
+      <label>Your notes on {{ teacher.name.split()[0] }}
         <textarea name="coach_notes_on_teacher" rows="4"
-                  placeholder="Framing that helps future observations. Kept public — the teacher sees these.">{{ profile.coach_notes_on_teacher or '' }}</textarea>
+                  placeholder="Framing that helps future visits. {{ teacher.name.split()[0] }} sees these — the scratchpad on their page is where the private working-theory notes live.">{{ profile.coach_notes_on_teacher or '' }}</textarea>
       </label>
     </section>
 
     {# --- Skill-development trajectory --- #}
     <section class="card profile-form">
-      <h2><svg class="icon icon-sm"><use href="#icon-sparkle"/></svg>Skill-development trajectory</h2>
+      <h2><svg class="icon icon-sm"><use href="#icon-sparkle"/></svg>Where {{ teacher.name.split()[0] }} is growing</h2>
       <p class="muted small">
-        A running narrative of what the teacher is working to master and where they have been in development.
-        Updated as the coaching relationship evolves. Distinct from per-observation reports.
+        A running story of what {{ teacher.name.split()[0] }} is working to master and where they've been in their growth.
+        Updated as your work together evolves. Distinct from per-observation reports.
       </p>
-      <label>Narrative
+      <label>The story
         <textarea name="skill_development_narrative" rows="5"
-                  placeholder="This school year they have moved from establishing classroom management to leaning into student discourse. Two cycles ago they focused on peer-response routines; this cycle they are extending into probing follow-ups...">{{ profile.skill_development_narrative or '' }}</textarea>
+                  placeholder="This school year they've moved from establishing classroom management to leaning into student discourse. Two cycles ago they focused on peer-response routines; this cycle they're extending into probing follow-ups...">{{ profile.skill_development_narrative or '' }}</textarea>
       </label>
     </section>
 
     {# --- Coach ratings + gap --- #}
     <section class="card profile-form">
-      <h2><svg class="icon icon-sm"><use href="#icon-goal"/></svg>Coach ratings (1–5) — mirror the teacher's self-ratings</h2>
+      <h2><svg class="icon icon-sm"><use href="#icon-goal"/></svg>How you see {{ teacher.name.split()[0] }} (1–5)</h2>
       <p class="muted small">
-        Rate the teacher on the same dimensions the teacher self-rates. Optional per-dimension context explains your rating.
-        The <em>gap</em> between coach and teacher rating is itself a coaching signal.
+        Same dimensions {{ teacher.name.split()[0] }} rates themselves on. Optional per-dimension notes explain what you saw.
+        The <em>gap</em> between how you see {{ teacher.name.split()[0] }} and how they see themselves is often the coaching conversation waiting to happen.
       </p>
       <div class="row">
         {% for dim in self_rating_dimensions %}
@@ -177,7 +177,7 @@
         {% endfor %}
       </div>
       {% for dim in self_rating_dimensions %}
-      <label>Context — {{ dim|replace('_', ' ')|title }}
+      <label>What you saw — {{ dim|replace('_', ' ')|title }}
         <input type="text" name="coach_rating_ctx_{{ dim }}"
                value="{{ (profile.coach_ratings_context or {}).get(dim, '') }}"
                placeholder="Why this rating? Anything specific?">
@@ -192,7 +192,7 @@
     <a class="button-link secondary" href="/teachers/{{ teacher.id }}">Cancel</a>
     <button type="submit">
       <svg class="icon icon-sm"><use href="#icon-check"/></svg>
-      Save {{ 'teacher' if side == 'teacher' else 'coach' }} profile
+      {{ 'Save your side' if side == 'teacher' else 'Save your read' }}
     </button>
   </div>
 </form>

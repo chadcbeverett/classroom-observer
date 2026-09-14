@@ -2,10 +2,18 @@
 {% block title %}All lesson plans · Classroom Observer{% endblock %}
 {% block content %}
 
+{% set _status_labels = {
+  'submitted': 'sent in',
+  'coach_reviewed': 'coach has looked',
+  'revision_requested': 'revision asked for',
+  'approved': 'ready to teach',
+  'archived': 'archived',
+} %}
+
 <div class="page-header">
   <div>
-    <h1><svg class="icon icon-lg"><use href="#icon-lesson-plan"/></svg>Lesson plans</h1>
-    <p class="muted">All plans across all teachers.</p>
+    <h1><svg class="icon icon-lg"><use href="#icon-lesson-plan"/></svg>Every lesson plan</h1>
+    <p class="muted">Across every teacher.</p>
   </div>
   <div class="page-header-meta">
     <span class="count-chip">{{ plans|length }} plan{{ 's' if plans|length != 1 }}</span>
@@ -15,8 +23,8 @@
 {% if not plans %}
   <div class="empty-cta">
     <span class="empty-cta-icon"><svg class="icon"><use href="#icon-lesson-plan"/></svg></span>
-    <h3>No lesson plans on file</h3>
-    <p>Teachers upload plans from their individual page. Coaches review, comment, and set status.</p>
+    <h3>No plans on file</h3>
+    <p>Teachers send plans in from their own page. Coaches read, comment, and move them through the review.</p>
     <a class="button-link" href="/teachers">
       <svg class="icon icon-sm"><use href="#icon-arrow-right"/></svg>Go to teachers
     </a>
@@ -31,8 +39,8 @@
       <th>Title</th>
       <th>Covers</th>
       <th>v</th>
-      <th>Status</th>
-      <th>Updated</th>
+      <th>Where it is</th>
+      <th>Last touched</th>
       <th></th>
     </tr>
   </thead>
@@ -47,13 +55,13 @@
       <td>{{ p.teacher_name }}</td>
       <td><a href="/lesson-plans/{{ p.id }}" class="row-title">{{ p.title }}</a></td>
       <td class="muted small">
-        {% if p.plan_start_date %}{{ p.plan_start_date }}{% endif %}
-        {% if p.plan_end_date %} – {{ p.plan_end_date }}{% endif %}
+        {% if p.plan_start_date %}{{ p.plan_start_date | warmdate }}{% endif %}
+        {% if p.plan_end_date %} – {{ p.plan_end_date | warmdate }}{% endif %}
       </td>
       <td>v{{ p.current_version }}</td>
-      <td><span class="pill pill-{{ p.status }}">{{ p.status|replace('_', ' ') }}</span></td>
-      <td class="muted small">{{ p.updated_at[:10] if p.updated_at else p.created_at[:10] }}</td>
-      <td><a class="button-link" href="/lesson-plans/{{ p.id }}">Open →</a></td>
+      <td><span class="pill pill-{{ p.status }}">{{ _status_labels.get(p.status, p.status|replace('_', ' ')) }}</span></td>
+      <td class="muted small">{{ (p.updated_at or p.created_at) | warmdate }}</td>
+      <td><a class="button-link" href="/lesson-plans/{{ p.id }}">Open</a></td>
     </tr>
     {% endfor %}
   </tbody>

@@ -7,6 +7,22 @@
 {% set title = cycle.notes.splitlines()[0] if cycle.notes else 'Coaching cycle' %}
 {% set prog = cycle_progress(cycle) %}
 
+{# Warm labels for the raw implementation codes. Kept in sync with detail.html. #}
+{% set _impl_labels = {
+  'full': 'landed full',
+  'partial': 'landed partial',
+  'not_observed': "didn't see it",
+  'regressed': 'went the other way',
+} %}
+{% set _goal_status_labels = {
+  'proposed': 'waiting',
+  'active': 'in play',
+  'closed_met': 'met',
+  'closed_partial': 'partial',
+  'closed_unmet': 'unmet',
+  'abandoned': 'set aside',
+} %}
+
 <p class="crumbs"><a href="/teachers/{{ teacher.id }}">← {{ teacher.name }}</a></p>
 
 {# ---- Hero card: cycle title + teacher avatar + active/closed pill ---- #}
@@ -22,15 +38,15 @@
     <h1>{{ title }}</h1>
     <p class="teacher-hero-summary">
       <a href="/teachers/{{ teacher.id }}" class="obs-hero-name">{{ teacher.name }}</a>
-      · opened {{ cycle.opened_at[:10] }}
-      {% if cycle.expected_close_date and is_active %} · expected close {{ cycle.expected_close_date }}{% endif %}
-      {% if cycle.closed_at %} · closed {{ cycle.closed_at[:10] }}{% endif %}
+      · opened {{ cycle.opened_at | warmdate }}
+      {% if cycle.expected_close_date and is_active %} · aimed for {{ cycle.expected_close_date | warmdate }}{% endif %}
+      {% if cycle.closed_at %} · closed {{ cycle.closed_at | warmdate }}{% endif %}
     </p>
   </div>
   <div class="teacher-hero-actions" style="align-items: flex-end;">
     <span class="pill pill-{{ 'active' if is_active else 'closed_met' }}"
           style="font-size: 12px; padding: 3px 10px;">
-      {{ 'active' if is_active else 'closed' }}
+      {{ 'in play' if is_active else 'closed' }}
     </span>
     <a class="button-link secondary" href="/cycles/{{ cycle.id }}/print" target="_blank">
       <svg class="icon"><use href="#icon-lesson-plan"/></svg>Print / PDF
@@ -47,12 +63,12 @@
   </div>
   {% if cycle.growth_story %}
   <div class="growth-story-body">{{ cycle.growth_story }}</div>
-  <div class="muted small" style="margin-top: 10px;">— Coach's narrative of what changed over the arc</div>
+  <div class="muted small" style="margin-top: 10px;">— Your telling of what changed over the arc</div>
   <details style="margin-top: 12px;">
-    <summary class="muted small" style="cursor: pointer;">Edit</summary>
+    <summary class="muted small" style="cursor: pointer;">Rework it</summary>
     <form method="post" action="/cycles/{{ cycle.id }}/growth-story" style="margin-top: 8px;">
       <textarea name="growth_story" rows="8" style="width:100%; padding: 8px; border: 1px solid var(--border); border-radius: 4px; font-family: inherit; font-size: 14px; line-height: 1.6;">{{ cycle.growth_story }}</textarea>
-      <button type="submit" style="margin-top: 6px;">Save changes</button>
+      <button type="submit" style="margin-top: 6px;">Save the change</button>
     </form>
   </details>
   {% else %}
@@ -61,7 +77,7 @@
     <summary style="cursor: pointer; color: var(--accent); font-weight: 600;">+ Write the growth story now</summary>
     <form method="post" action="/cycles/{{ cycle.id }}/growth-story" style="margin-top: 8px;">
       <textarea name="growth_story" rows="6" style="width:100%; padding: 8px; border: 1px solid var(--border); border-radius: 4px; font-family: inherit; font-size: 14px; line-height: 1.6;" placeholder="What changed for {{ teacher.name.split()[0] }}? What surprised you? What carries forward?"></textarea>
-      <button type="submit" style="margin-top: 6px;">Save growth story</button>
+      <button type="submit" style="margin-top: 6px;">Save the growth story</button>
     </form>
   </details>
   {% endif %}
@@ -85,20 +101,20 @@
       </div>
       <div class="cycle-progress-days">
         {% if prog.days_remaining >= 0 %}
-          <strong>{{ prog.days_remaining }}</strong> day{{ 's' if prog.days_remaining != 1 }} remaining
+          <strong>{{ prog.days_remaining }}</strong> day{{ 's' if prog.days_remaining != 1 }} to go
         {% else %}
-          <strong>{{ -prog.days_remaining }}</strong> day{{ 's' if prog.days_remaining != -1 }} overdue
+          <strong>{{ -prog.days_remaining }}</strong> day{{ 's' if prog.days_remaining != -1 }} past the aim
         {% endif %}
       </div>
       {% if cycle.expected_close_date %}
         <details class="add-form" style="margin-top: 10px; padding-top: 8px;">
-          <summary>Adjust close date</summary>
+          <summary>Change the aim</summary>
           <form method="post" action="/cycles/{{ cycle.id }}/update-close-date" class="inline-form">
-            <label>New expected close
+            <label>Aim for
               <input type="date" name="expected_close_date"
                      value="{{ cycle.expected_close_date or '' }}" required>
             </label>
-            <button type="submit">Update</button>
+            <button type="submit">Set new aim</button>
           </form>
         </details>
       {% endif %}
@@ -108,14 +124,14 @@
         Cycle closed
       </div>
       <div class="cycle-week-big">
-        Closed <span class="muted">{{ cycle.closed_at[:10] }}</span>
+        Closed <span class="muted">{{ cycle.closed_at | warmdate }}</span>
       </div>
       {% if cycle.expected_close_date %}
-        <div class="cycle-progress-days">Opened {{ cycle.opened_at[:10] }} · Expected {{ cycle.expected_close_date }}</div>
+        <div class="cycle-progress-days">Opened {{ cycle.opened_at | warmdate }} · aimed for {{ cycle.expected_close_date | warmdate }}</div>
       {% endif %}
     {% else %}
       <div class="cycle-progress-days">
-        No expected close date set.
+        No aim set for the close.
       </div>
     {% endif %}
   </div>
@@ -132,7 +148,7 @@
   <div class="{{ kpi_class }}">
     <div class="kpi-label">
       <svg class="icon icon-sm"><use href="#icon-action"/></svg>
-      Cycle implementation
+      How the moves are landing
     </div>
     <div>
       <div class="kpi-value {{ 'small' if action_stats.implementation_rate_pct is none }}">
@@ -141,12 +157,12 @@
       </div>
       <div class="kpi-sub">
         {% if action_stats.total_assessed %}
-          {{ action_stats.total_assessed }} of {{ action_stats.total_issued }} actions assessed
-          {% if action_stats.awaiting %}<br>{{ action_stats.awaiting }} awaiting{% endif %}
+          You've read {{ action_stats.total_assessed }} of {{ action_stats.total_issued }} moves
+          {% if action_stats.awaiting %}<br>{{ action_stats.awaiting }} still to read{% endif %}
         {% elif action_stats.total_issued %}
-          {{ action_stats.total_issued }} action{{ 's' if action_stats.total_issued != 1 }} issued, none assessed
+          {{ action_stats.total_issued }} move{{ 's' if action_stats.total_issued != 1 }} named, none read yet
         {% else %}
-          No actions in this cycle yet
+          No moves named in this cycle yet
         {% endif %}
       </div>
     </div>
@@ -166,7 +182,7 @@
   <div class="{{ gkpi }}">
     <div class="kpi-label">
       <svg class="icon icon-sm"><use href="#icon-trend-up"/></svg>
-      Growth on targeted domains
+      Movement on the domains you're working on
     </div>
     <div>
       <div class="kpi-value {{ 'small' if avg_delta is none }}">
@@ -176,11 +192,11 @@
       </div>
       <div class="kpi-sub">
         {% if avg_delta is not none %}
-          Avg rubric-score change across {{ deltas|length }} targeted domain{{ 's' if deltas|length != 1 }}
+          Average rubric change across {{ deltas|length }} domain{{ 's' if deltas|length != 1 }} you're teaching into
         {% elif impact %}
-          Need ≥2 observations per targeted domain to compute
+          Need at least two observations per domain before this reads
         {% else %}
-          Add a goal with a rubric domain to track this
+          Name a goal on a rubric domain to start reading this
         {% endif %}
       </div>
     </div>
@@ -197,7 +213,7 @@
   <div class="goal-card">
     <div class="goal-header">
       <strong>{{ g.title }}</strong>
-      <span class="pill pill-{{ g.status }}">{{ g.status|replace('_', ' ') }}</span>
+      <span class="pill pill-{{ g.status }}">{{ _goal_status_labels.get(g.status, g.status|replace('_', ' ')) }}</span>
     </div>
     {% if g.description %}<p>{{ g.description }}</p>{% endif %}
     {% if g.releasing %}
@@ -223,7 +239,7 @@
 <div class="empty-cta compact">
   <span class="empty-cta-icon"><svg class="icon"><use href="#icon-goal"/></svg></span>
   <h3>This cycle is ready for a goal to anchor it</h3>
-  <p>Propose one with {{ teacher.name.split()[0] }} and attach it here — the goal is what the growth KPI measures.</p>
+  <p>Name one with {{ teacher.name.split()[0] }} and tie it in here — the goal is what the growth arc reads against.</p>
   <a class="button-link" href="/teachers/{{ teacher.id }}">
     <svg class="icon icon-sm"><use href="#icon-arrow-right"/></svg>Open {{ teacher.name.split()[0] }}'s page
   </a>
@@ -240,8 +256,8 @@
     <thead>
       <tr>
         <th>Video</th>
-        <th>Uploaded</th>
-        <th>Status</th>
+        <th>Watched</th>
+        <th>Where it's at</th>
         <th>Ratings</th>
         <th></th>
       </tr>
@@ -250,14 +266,14 @@
       {% for o in observations %}
       <tr>
         <td class="mono truncate">{{ o.video_filename }}</td>
-        <td class="muted small">{{ o.uploaded_at[:10] if o.uploaded_at else '—' }}</td>
+        <td class="muted small">{{ o.uploaded_at | warmdate if o.uploaded_at else '—' }}</td>
         <td><span class="badge badge-{{ o.status }}">{{ o.status }}</span></td>
         <td class="ratings-cell">
           {% for domain, rating in o.ratings.items() %}
             <span class="rating rating-{{ rating|replace(' ', '-')|lower }}" title="{{ domain }}">{{ rating[:3]|upper }}</span>
           {% endfor %}
         </td>
-        <td><a class="button-link" href="/observations/{{ o.id }}">Open →</a></td>
+        <td><a class="button-link" href="/observations/{{ o.id }}">Open</a></td>
       </tr>
       {% endfor %}
     </tbody>
@@ -266,7 +282,7 @@
     <div class="empty-cta compact">
       <span class="empty-cta-icon"><svg class="icon"><use href="#icon-observations"/></svg></span>
       <h3>Ready for an observation to fill this cycle in</h3>
-      <p>Open any observation for {{ teacher.name.split()[0] }} and attach it from its detail page — that's what makes the growth arc visible over time.</p>
+      <p>Open any observation of {{ teacher.name.split()[0] }} and tie it to this cycle from its page — that's what makes the growth arc visible over time.</p>
       <a class="button-link" href="/teachers/{{ teacher.id }}">
         <svg class="icon icon-sm"><use href="#icon-arrow-right"/></svg>See {{ teacher.name.split()[0] }}'s observations
       </a>
@@ -277,7 +293,7 @@
 {# ---- Rating movement on targeted domains ---- #}
 {% if impact %}
 <div class="section-title-row">
-  <h2><svg class="icon"><use href="#icon-trend-up"/></svg>Rating movement on targeted domains</h2>
+  <h2><svg class="icon"><use href="#icon-trend-up"/></svg>How the ratings moved on the domains you're working on</h2>
 </div>
 <section class="card">
   {% for row in impact %}
@@ -298,7 +314,7 @@
     <ol class="impact-trail">
       {% for ts, rating in row.trail %}
       <li>
-        <span class="muted small">{{ ts[:10] }}</span>
+        <span class="muted small">{{ ts | warmdate }}</span>
         <span class="rating rating-{{ rating|replace(' ', '-')|lower }}">{{ rating }}</span>
       </li>
       {% endfor %}
@@ -311,21 +327,21 @@
 {# ---- Action-status breakdown (compact grid) ---- #}
 {% if action_stats.total_assessed %}
 <div class="section-title-row">
-  <h2><svg class="icon"><use href="#icon-action"/></svg>Action assessment breakdown</h2>
+  <h2><svg class="icon"><use href="#icon-action"/></svg>How the moves landed, at a glance</h2>
 </div>
 <section class="card">
   <div class="lp-status-grid">
     {% for status in ['full', 'partial', 'not_observed', 'regressed'] %}
       {% if action_stats.by_status[status] %}
       <div class="lp-status-cell">
-        <span class="pill pill-impl-{{ status }}">{{ status|replace('_', ' ') }}</span>
+        <span class="pill pill-impl-{{ status }}">{{ _impl_labels.get(status, status|replace('_', ' ')) }}</span>
         <span class="lp-status-num">{{ action_stats.by_status[status] }}</span>
       </div>
       {% endif %}
     {% endfor %}
     {% if action_stats.awaiting %}
       <div class="lp-status-cell">
-        <span class="pill">awaiting</span>
+        <span class="pill">still to read</span>
         <span class="lp-status-num">{{ action_stats.awaiting }}</span>
       </div>
     {% endif %}
@@ -345,7 +361,7 @@
 {% if is_active %}
 <section class="card">
   <h2>Close this cycle</h2>
-  <p class="muted small">Closing captures a snapshot; observations and goals stay attached.</p>
+  <p class="muted small">Closing captures a snapshot — observations and goals stay tied in.</p>
 
   {% if close_warn %}
   {# Parse counts out of tags like "unassessed_actions:3" — the router
@@ -367,25 +383,25 @@
       <strong>Hold on — work in this cycle is unfinished.</strong>
       <ul>
         {% if 'no_obs' in close_warn %}
-        <li>No complete observations attached — cycle impact metrics will read as no data.</li>
+        <li>No complete observations tied in — the growth-arc numbers will read as no data.</li>
         {% endif %}
         {% if 'no_goals' in close_warn %}
-        <li>No goals attached — growth on targeted domains can't be measured.</li>
+        <li>No goals tied in — you won't be able to read growth on any domain.</li>
         {% endif %}
         {% if 'open_goals' in close_warn %}
-        <li>Goals in this cycle are still open (proposed/active). Close each one first — met, partial, unmet — so the growth story is complete.</li>
+        <li>Goals in this cycle are still in play. Close each one first — met, partial, unmet — so the growth story is whole.</li>
         {% endif %}
         {% if _wmap.unassessed_actions %}
-        <li>{{ _wmap.unassessed_actions }} bite-sized action{{ 's' if _wmap.unassessed_actions != 1 else '' }} issued in this cycle {{ 'has' if _wmap.unassessed_actions == 1 else 'have' }} not been assessed. Mark implementation on each — full, partial, not observed — before closing.</li>
+        <li>{{ _wmap.unassessed_actions }} bite-sized move{{ 's' if _wmap.unassessed_actions != 1 else '' }} named in this cycle {{ 'is' if _wmap.unassessed_actions == 1 else 'are' }} still to read. Read how each one landed — full, partial, didn't see it — before closing.</li>
         {% endif %}
         {% if _wmap.unacked_hlm %}
-        <li>{{ _wmap.unacked_hlm }} teacher response{{ 's' if _wmap.unacked_hlm != 1 else '' }} to your coach move {{ 'is' if _wmap.unacked_hlm == 1 else 'are' }} unacknowledged (adjust / talk). Acknowledge on the observation page so the teacher sees you saw it.</li>
+        <li>{{ _wmap.unacked_hlm }} of {{ teacher.name.split()[0] }}'s repl{{ 'y' if _wmap.unacked_hlm == 1 else 'ies' }} {{ 'is' if _wmap.unacked_hlm == 1 else 'are' }} still open (they want to reshape it, or talk it through). Mark {{ 'it' if _wmap.unacked_hlm == 1 else 'them' }} read on the observation page so {{ teacher.name.split()[0] }} sees you saw {{ 'it' if _wmap.unacked_hlm == 1 else 'them' }}.</li>
         {% endif %}
         {% if _wmap.obs_no_move %}
-        <li>{{ _wmap.obs_no_move }} observation{{ 's' if _wmap.obs_no_move != 1 else '' }} in this cycle {{ 'has' if _wmap.obs_no_move == 1 else 'have' }} no published coach move. The AI ran but you never mediated it — publish a move first, or acknowledge the gap.</li>
+        <li>{{ _wmap.obs_no_move }} observation{{ 's' if _wmap.obs_no_move != 1 else '' }} in this cycle {{ 'has' if _wmap.obs_no_move == 1 else 'have' }} no move you named. The AI wrote its read but you didn't come alongside — name a move first, or acknowledge the gap.</li>
         {% endif %}
       </ul>
-      <p class="muted small">If you're closing on purpose (e.g. cancelled early, or you'll finish the work off-tool), check the box below and submit again.</p>
+      <p class="muted small">If you're closing on purpose (cancelled early, or you'll finish the work off-tool), check the box below and submit again.</p>
     </div>
   </div>
   {% endif %}
@@ -394,19 +410,19 @@
     <input type="hidden" name="teacher_id" value="{{ teacher.id }}">
     <label>Growth story — the story of this cycle
       <textarea name="growth_story" rows="6"
-        placeholder="What changed for {{ teacher.name.split()[0] }} over the arc? What was the emotional shape — struggle, breakthrough, plateau? What surprised you? What carries forward? This shows up co-equal with the rubric-delta on the closed cycle page — worth writing well.">{{ cycle.growth_story or '' }}</textarea>
+        placeholder="What changed for {{ teacher.name.split()[0] }} over the arc? What was the emotional shape — struggle, breakthrough, plateau? What surprised you? What carries forward? This shows up co-equal with the rubric-movement on the closed cycle page — worth writing well.">{{ cycle.growth_story or '' }}</textarea>
     </label>
     <label>Closing notes (short tags — optional)
       <textarea name="closing_notes" rows="2"
-        placeholder="Terse markers for reports (e.g. 'discourse cycle · partial · carry forward peer-response')."></textarea>
+        placeholder="Short markers for the record (e.g. 'discourse cycle · partial · carry forward peer-response')."></textarea>
     </label>
     {% if close_warn %}
     <label class="goal-close-check goal-close-carry" style="margin-bottom:8px;">
       <input type="checkbox" name="confirm_empty" value="1">
-      <span>Yes — close this empty cycle anyway (I understand the metrics will read as no data)</span>
+      <span>Yes — close it anyway (I know the numbers will read as no data)</span>
     </label>
     {% endif %}
-    <button type="submit">Close cycle</button>
+    <button type="submit">Close it out</button>
   </form>
 </section>
 {% endif %}

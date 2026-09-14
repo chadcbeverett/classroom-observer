@@ -3,8 +3,8 @@
 {% block content %}
 
 <h1>District context</h1>
-<p class="muted">Per academic year: year arc (time-of-year phases), district priorities, and initiatives in flight.
-  Injected into the AI's prompt so its coaching recommendations are calibrated to what the district cares about right now.</p>
+<p class="muted">Per academic year: the arc of the year, the priorities you're asking teachers to work on, and the initiatives in play.
+  All of this goes into the AI's read so what it suggests is tuned to what the district cares about right now.</p>
 
 <form method="get" action="/admin/district-context" class="inline-form">
   <label>Academic year
@@ -22,11 +22,10 @@
     <label>End date   <input type="date" name="year_end_date"   value="{{ ctx.year_end_date or '' if ctx else '' }}"></label>
   </div>
 
-  <h3>District priorities this year</h3>
+  <h3>What you're asking teachers to work on this year</h3>
   <p class="muted small">
-    Structured priorities are used by the teacher-hub "starter goal" chips + district
-    dashboard rollup. Each row: short name, longer description, and the rubric domain
-    it most directly targets.
+    These show up as "starter goal" chips on each teacher's page, and roll up on the district dashboard.
+    Each one: short name, a sentence about what changes in classrooms, and the rubric domain it most directly names.
   </p>
   <div id="priorities-editor">
     {% set _priorities = (ctx.district_priorities_json if ctx and ctx.district_priorities_json else []) %}
@@ -110,9 +109,9 @@
 {% endfor %}{% endif %}</textarea>
   </label>
 
-  <h3>Observation expectations</h3>
+  <h3>Observation cadence</h3>
   <p class="muted small">
-    Sets the coaching cadence targets used by the compliance report and the "next observation due" indicator on teacher hubs.
+    Sets the rhythm the compliance report reads against, and drives the "time to be back in the room" cue on teacher hubs.
   </p>
   <div class="row">
     <label>Observations per teacher per year
@@ -133,17 +132,16 @@
   </div>
 
   <div class="row">
-    <button type="submit">Save district context</button>
+    <button type="submit">Save the district context</button>
   </div>
 </form>
 
 {# ---- Uploaded documents (arc-of-year, coaching framework, curriculum pacing, etc.) ---- #}
 <section class="card">
-  <h2>Uploaded documents</h2>
+  <h2>Documents in the AI's context</h2>
   <p class="muted small">
-    Upload PDFs or DOCX files (arc-of-year, coaching framework, curriculum pacing guides, etc.).
-    Text is extracted server-side and injected into the AI's scoring context so recommendations
-    align with the district's own materials.
+    Bring in PDFs or DOCX files — arc-of-year, coaching framework, curriculum pacing guides, and the like.
+    We pull the text out on the server and put it into the AI's read, so what it suggests lines up with your own materials.
   </p>
   {% if documents %}
     <table class="obs-table">
@@ -152,8 +150,8 @@
           <th>Title</th>
           <th>Type</th>
           <th>File</th>
-          <th>Uploaded</th>
-          <th>Text extracted?</th>
+          <th>Brought in</th>
+          <th>Text pulled?</th>
           <th></th>
         </tr>
       </thead>
@@ -163,7 +161,7 @@
           <td><strong>{{ d.title }}</strong></td>
           <td>{{ d.doc_type or '—' }}</td>
           <td class="mono truncate">{{ d.original_filename }}</td>
-          <td class="muted small">{{ d.uploaded_at[:10] }}</td>
+          <td class="muted small">{{ d.uploaded_at | warmdate }}</td>
           <td>{% if d.extracted_text %}✓ ({{ d.extracted_text|length }} chars){% else %}—{% endif %}</td>
           <td>
             <form method="post" action="/admin/district-documents/{{ d.id }}/archive" style="display:inline;">
@@ -176,11 +174,11 @@
       </tbody>
     </table>
   {% else %}
-    <p class="muted">No documents uploaded for {{ academic_year }} yet.</p>
+    <p class="muted">No documents in for {{ academic_year }} yet.</p>
   {% endif %}
 
   <details class="add-form">
-    <summary>+ Upload a document</summary>
+    <summary>+ Bring in a document</summary>
     <form method="post" action="/admin/district-documents" enctype="multipart/form-data">
       <input type="hidden" name="academic_year" value="{{ academic_year }}">
       <div class="row">
@@ -202,7 +200,7 @@
       <label>File (PDF or DOCX)
         <input type="file" name="document" accept=".pdf,.docx,.doc,.txt,.md" required>
       </label>
-      <button type="submit">Upload</button>
+      <button type="submit">Bring it in</button>
     </form>
   </details>
 </section>

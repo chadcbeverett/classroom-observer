@@ -21,7 +21,7 @@
     <label>Required per teacher
       <input type="number" name="target" value="{{ target }}" min="1" max="20">
     </label>
-    <button type="submit">Update</button>
+    <button type="submit">Reload</button>
   </form>
   <a class="button-link" href="/compliance/export.csv?year={{ academic_year }}&target={{ target }}">
     <svg class="icon icon-sm"><use href="#icon-arrow-right"/></svg>
@@ -94,8 +94,8 @@
           <span class="pill pill-impl-regressed">Behind</span>
         {% endif %}
       </td>
-      <td class="muted small">{{ r.first_at or '—' }}</td>
-      <td class="muted small">{{ r.last_at or '—' }}</td>
+      <td class="muted small">{{ r.first_at | warmdate if r.first_at else '—' }}</td>
+      <td class="muted small">{{ r.last_at | warmdate if r.last_at else '—' }}</td>
     </tr>
     {% endfor %}
   </tbody>

@@ -145,6 +145,71 @@ TEMPLATES.env.filters["duration"] = _fmt_duration
 TEMPLATES.env.filters["ts"] = _fmt_ts
 
 
+def _fmt_warm_date(value) -> str:
+    """Format a date as coach-copy would say it aloud.
+
+    - Same-year dates → "Sep 12"
+    - Other years    → "Sep 12, 2024"
+    - Empty / unparseable → ""
+
+    Reporting tables (compliance rows, timestamps for the record) stay on
+    the raw string. This filter is for prose — dashboard cards, empty
+    states, teacher hubs — where "2026-09-12" reads like a receipt.
+    """
+    if not value:
+        return ""
+    from datetime import datetime as _dt, date as _date
+    try:
+        s = str(value)
+        if "T" in s:
+            s = s.split("T", 1)[0]
+        d = _date.fromisoformat(s[:10])
+    except Exception:
+        return str(value)
+    now = _dt.now(timezone.utc).date()
+    if d.year == now.year:
+        return d.strftime("%b %-d")
+    return d.strftime("%b %-d, %Y")
+
+
+def _fmt_warm_datetime(value) -> str:
+    """Warm form for a moment — "Sep 12 at 5:42 pm". Falls back to date-only
+    if the input is date-only. Tolerates several input shapes because some
+    callers pre-format via ``_fmt_ts`` (space-separated) and some pass raw ISO.
+    """
+    if not value:
+        return ""
+    from datetime import datetime as _dt
+    s = str(value).strip()
+    if s in ("", "—"):
+        return s
+    # Try to parse a range of shapes: ISO with T/Z, space-separated compact,
+    # date-only. Fall through to warm-date if nothing sticks.
+    dt = None
+    for candidate in (s, s.replace("Z", "+00:00"), s.replace(" ", "T", 1)):
+        try:
+            dt = _dt.fromisoformat(candidate)
+            break
+        except Exception:
+            continue
+    if dt is None:
+        # Last chance: try common compact form "YYYY-MM-DD HH:MM"
+        try:
+            dt = _dt.strptime(s[:16], "%Y-%m-%d %H:%M")
+        except Exception:
+            return _fmt_warm_date(value)
+    now = _dt.now(timezone.utc)
+    when = dt.strftime("%b %-d")
+    if dt.year != now.year:
+        when = dt.strftime("%b %-d, %Y")
+    time_part = dt.strftime("%-I:%M %p").lower()
+    return f"{when} at {time_part}"
+
+
+TEMPLATES.env.filters["warmdate"] = _fmt_warm_date
+TEMPLATES.env.filters["warmdatetime"] = _fmt_warm_datetime
+
+
 def _cycle_progress(cycle: dict) -> Optional[dict]:
     """Compute 'week X of Y' + days remaining for a cycle.
     Returns None when required dates are missing.

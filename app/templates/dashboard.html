@@ -27,7 +27,7 @@
     {% if attention_total == 0 %}
       <div class="attention-empty">
         <svg class="icon icon-lg"><use href="#icon-check"/></svg>
-        <div>Nothing waiting. Everything in the pipeline is fresh.</div>
+        <div>Nothing waiting. You're caught up.</div>
       </div>
     {% else %}
     <ul class="attention-list">
@@ -37,9 +37,9 @@
           <a class="attention-item cool" href="/observations/{{ r.observation_id }}">
             <svg class="icon"><use href="#icon-teachers"/></svg>
             <div class="attention-body">
-              <div class="title">{{ r.teacher_name }} responded to your move</div>
+              <div class="title">{{ r.teacher_name }} wrote back on the move</div>
               <div class="sub">
-                {% if r.response_type == 'adjust' %}Wants to adjust — meet and align{% else %}Wants to talk it through with you{% endif %}
+                {% if r.response_type == 'adjust' %}Wants to reshape it — worth sitting down together{% else %}Wants to talk it through before trying{% endif %}
                 {% if r.teacher_note %} · "{{ r.teacher_note[:80] }}{{ '…' if r.teacher_note|length > 80 }}"{% endif %}
               </div>
             </div>
@@ -54,11 +54,11 @@
             <svg class="icon"><use href="#icon-observations"/></svg>
             <div class="attention-body">
               <div class="title">
-                {% if r.no_move %}{{ r.teacher_name }}'s move is ready to publish
-                {% else %}{{ r.teacher_name }}'s debrief focus is ready to name
+                {% if r.no_move %}The move for {{ r.teacher_name }} is waiting on you
+                {% else %}Name what you'll teach into with {{ r.teacher_name }}
                 {% endif %}
               </div>
-              <div class="sub">Observation scored {{ r.days }} day{{ 's' if r.days != 1 }} ago{% if r.no_move %} — draft + publish the coach's move so {{ r.teacher_name }} can respond{% else %} — name your debrief-focus move{% endif %}</div>
+              <div class="sub">You watched {{ r.teacher_name }} {{ r.days }} day{{ 's' if r.days != 1 }} ago — {% if r.no_move %}time to name the move you're bringing{% else %}time to name the piece you'll teach into{% endif %}</div>
             </div>
             <div class="attention-meta">{{ r.days }}d</div>
           </a>
@@ -70,8 +70,8 @@
           <a class="attention-item" href="/teachers/{{ r.teacher_id }}">
             <svg class="icon"><use href="#icon-action"/></svg>
             <div class="attention-body">
-              <div class="title">{{ r.teacher_name }}'s action is ready to assess</div>
-              <div class="sub">See what worked · "{{ r.bite_sized_action_text[:80] }}{{ '…' if r.bite_sized_action_text|length > 80 }}"</div>
+              <div class="title">Time to notice how the move landed with {{ r.teacher_name }}</div>
+              <div class="sub">The one you named: "{{ r.bite_sized_action_text[:80] }}{{ '…' if r.bite_sized_action_text|length > 80 }}"</div>
             </div>
             <div class="attention-meta">{{ r.days }}d</div>
           </a>
@@ -84,9 +84,9 @@
             <svg class="icon"><use href="#icon-cycle"/></svg>
             <div class="attention-body">
               <div class="title">
-                {% if r.days_until < 0 %}{{ r.teacher_name }}'s cycle is closing — reflect together{% elif r.days_until == 0 %}{{ r.teacher_name }}'s cycle closes today — a good moment for reflection{% else %}{{ r.teacher_name }}'s cycle closes in {{ r.days_until }}d — start shaping the close{% endif %}
+                {% if r.days_until < 0 %}{{ r.teacher_name }}'s cycle is asking to be closed — a moment to reflect together{% elif r.days_until == 0 %}{{ r.teacher_name }}'s cycle closes today — a good moment to sit together{% else %}{{ r.teacher_name }}'s cycle closes in {{ r.days_until }}d — start shaping how it wraps{% endif %}
               </div>
-              <div class="sub">Expected close: {{ r.expected_close_date }}</div>
+              <div class="sub">Aimed for {{ r.expected_close_date | warmdate }}</div>
             </div>
             <div class="attention-meta">
               {% if r.days_until < 0 %}{{ -r.days_until }}d past{% else %}{{ r.days_until }}d{% endif %}
@@ -100,8 +100,8 @@
           <a class="attention-item blue" href="/teachers/{{ r.teacher_id }}">
             <svg class="icon"><use href="#icon-goal"/></svg>
             <div class="attention-body">
-              <div class="title">Goal waiting to be agreed with {{ r.teacher_name }}</div>
-              <div class="sub">"{{ r.title[:80] }}{{ '…' if r.title|length > 80 }}" — proposed {{ r.days }} day{{ 's' if r.days != 1 }} ago</div>
+              <div class="title">Waiting on {{ r.teacher_name }} to weigh in on the goal you brought</div>
+              <div class="sub">"{{ r.title[:80] }}{{ '…' if r.title|length > 80 }}" — {{ r.days }} day{{ 's' if r.days != 1 }} since you brought it</div>
             </div>
             <div class="attention-meta">{{ r.days }}d</div>
           </a>
@@ -113,8 +113,8 @@
           <a class="attention-item" href="/teachers/{{ r.teacher_id }}/profile/teacher">
             <svg class="icon"><use href="#icon-teachers"/></svg>
             <div class="attention-body">
-              <div class="title">{{ r.teacher_name }}'s profile is empty</div>
-              <div class="sub">Fill it in with them — years teaching, self-ratings, coaching-style preference. Sharpens the AI's next read.</div>
+              <div class="title">You haven't done the getting-to-know piece with {{ r.teacher_name }}</div>
+              <div class="sub">Years teaching, self-ratings, how they like to be coached — fill it in together, on their time.</div>
             </div>
             <div class="attention-meta">new</div>
           </a>
@@ -126,8 +126,8 @@
           <a class="attention-item" href="/teachers/{{ r.teacher_id }}">
             <svg class="icon"><use href="#icon-clock"/></svg>
             <div class="attention-body">
-              <div class="title">{{ r.teacher_name }} is due for observation</div>
-              <div class="sub">Last observation {{ r.last_obs_at }} — {{ r.days_late }} day{{ 's' if r.days_late != 1 }} past the district cadence</div>
+              <div class="title">Time to be back in {{ r.teacher_name }}'s room</div>
+              <div class="sub">You last watched {{ r.teacher_name }} on {{ r.last_obs_at | warmdate }} — {{ r.days_late }} day{{ 's' if r.days_late != 1 }} past your district's cadence</div>
             </div>
             <div class="attention-meta">{{ r.days_late }}d</div>
           </a>
@@ -140,8 +140,8 @@
             <svg class="icon"><use href="#icon-lesson-plan"/></svg>
             <div class="attention-body">
               <div class="title">
-                {% if r.status == 'submitted' %}{{ r.teacher_name }}'s plan is ready for your read
-                {% else %}{{ r.teacher_name }}'s revised plan is ready
+                {% if r.status == 'submitted' %}{{ r.teacher_name }} sent a plan for your read
+                {% else %}{{ r.teacher_name }}'s revised plan is up
                 {% endif %}
               </div>
               <div class="sub">{{ r.title }}</div>
@@ -166,7 +166,7 @@
   <div class="{{ kpi_class }}">
     <div class="kpi-label">
       <svg class="icon icon-sm"><use href="#icon-trend-up"/></svg>
-      Implementation rate
+      How the moves are landing
     </div>
     <div>
       <div class="kpi-value {{ 'small' if implementation_rate is none }}">
@@ -174,10 +174,10 @@
       </div>
       <div class="kpi-sub">
         {% if assessed_actions %}
-          {{ assessed_actions }} of {{ total_actions }} actions assessed<br>
-          Success rate {% if success_rate is not none %}{{ success_rate }}%{% else %}—{% endif %}
+          You've read {{ assessed_actions }} of the {{ total_actions }} moves you've named<br>
+          Sticking full: {% if success_rate is not none %}{{ success_rate }}%{% else %}—{% endif %}
         {% else %}
-          No assessed actions yet
+          Nothing to read yet
         {% endif %}
       </div>
     </div>
@@ -186,8 +186,8 @@
 
 {# ---- Recent teachers ---- #}
 <div class="section-title-row">
-  <h2><svg class="icon"><use href="#icon-teachers"/></svg>Recent teachers</h2>
-  <a href="/teachers">All teachers →</a>
+  <h2><svg class="icon"><use href="#icon-teachers"/></svg>Teachers you've been with lately</h2>
+  <a href="/teachers">Everyone on your caseload →</a>
 </div>
 <div class="teacher-tiles">
   {% for t in recent_teachers %}
@@ -203,7 +203,7 @@
 
 {# ---- Aggregate stat strip (lower visual weight) ---- #}
 <div class="section-title-row">
-  <h2><svg class="icon"><use href="#icon-dashboard"/></svg>Program at a glance</h2>
+  <h2><svg class="icon"><use href="#icon-dashboard"/></svg>Where things stand</h2>
 </div>
 <section class="stat-strip">
   <div class="stat-card">
@@ -213,27 +213,27 @@
   <div class="stat-card">
     <div class="stat-label"><svg class="icon"><use href="#icon-observations"/></svg>Observations</div>
     <div class="stat-value">{{ obs_counts.total }}</div>
-    <div class="stat-sub">{{ obs_counts.complete }} complete · {{ obs_counts.in_flight }} in flight</div>
+    <div class="stat-sub">{{ obs_counts.complete }} closed · {{ obs_counts.in_flight }} still working</div>
   </div>
   <div class="stat-card">
-    <div class="stat-label"><svg class="icon"><use href="#icon-cycle"/></svg>Active cycles</div>
+    <div class="stat-label"><svg class="icon"><use href="#icon-cycle"/></svg>Cycles open</div>
     <div class="stat-value">{{ active_cycle_count }}</div>
   </div>
   <div class="stat-card">
-    <div class="stat-label"><svg class="icon"><use href="#icon-goal"/></svg>Active goals</div>
+    <div class="stat-label"><svg class="icon"><use href="#icon-goal"/></svg>Goals in play</div>
     <div class="stat-value">{{ active_goal_count }}</div>
   </div>
   <div class="stat-card">
-    <div class="stat-label"><svg class="icon"><use href="#icon-action"/></svg>Actions issued</div>
+    <div class="stat-label"><svg class="icon"><use href="#icon-action"/></svg>Moves named</div>
     <div class="stat-value">{{ total_actions }}</div>
-    <div class="stat-sub">{{ total_actions - assessed_actions }} awaiting</div>
+    <div class="stat-sub">{{ total_actions - assessed_actions }} still to notice</div>
   </div>
 </section>
 
 {# ---- Rubric ratings distribution ---- #}
 <section class="card">
-  <h2><svg class="icon"><use href="#icon-goal"/></svg>Rubric ratings distribution</h2>
-  <p class="muted small" style="margin-top: -4px;">Across all published reports.</p>
+  <h2><svg class="icon"><use href="#icon-goal"/></svg>Where teachers are on the rubric</h2>
+  <p class="muted small" style="margin-top: -4px;">Across every scored observation.</p>
   {% for domain in domains %}
     {% set counts = rating_counts.get(domain, {}) %}
     {% set n = counts.values() | sum %}
@@ -278,11 +278,11 @@
 
 {# ---- Recent observations ---- #}
 <section class="card">
-  <h2><svg class="icon"><use href="#icon-observations"/></svg>Recent observations</h2>
+  <h2><svg class="icon"><use href="#icon-observations"/></svg>Latest classroom visits</h2>
   {% if recent_observations %}
     <table class="obs-table">
       <thead>
-        <tr><th>Teacher</th><th>Video</th><th>Status</th><th>Uploaded</th><th></th></tr>
+        <tr><th>Teacher</th><th>Video</th><th>Where it's at</th><th>Watched</th><th></th></tr>
       </thead>
       <tbody>
         {% for o in recent_observations %}
@@ -290,14 +290,14 @@
           <td>{{ o.teacher_name }}</td>
           <td class="mono truncate">{{ o.video_filename }}</td>
           <td><span class="badge badge-{{ o.status }}">{{ o.status }}</span></td>
-          <td class="muted small">{{ o.uploaded_at[:16] if o.uploaded_at else '—' }}</td>
-          <td><a class="button-link" href="/observations/{{ o.id }}">Open →</a></td>
+          <td class="muted small">{{ o.uploaded_at | warmdatetime if o.uploaded_at else '—' }}</td>
+          <td><a class="button-link" href="/observations/{{ o.id }}">Open</a></td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
   {% else %}
-    <p class="muted">No observations yet. <a href="/observations">Upload one →</a></p>
+    <p class="muted">Nothing yet. <a href="/observations">Bring in your first observation.</a></p>
   {% endif %}
 </section>
 

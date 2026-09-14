@@ -4,6 +4,22 @@
 
 {% set _avatar_class = avatar_palette[avatar_idx(teacher.name)] %}
 
+{# Warm labels for the raw implementation codes, in the teacher's own voice
+   (their coach read the move — not "assessment"). #}
+{% set _tv_impl_labels = {
+  'full': 'landed full',
+  'partial': 'landed partial',
+  'not_observed': "didn't see it",
+  'regressed': 'went the other way',
+} %}
+{# Warm labels for lesson-plan statuses, teacher-facing. #}
+{% set _tv_plan_status_labels = {
+  'submitted': 'sent to your coach',
+  'coach_reviewed': 'your coach has looked',
+  'approved': 'ready to teach',
+  'archived': 'archived',
+} %}
+
 <div class="teacher-view-banner">
   <span class="banner-label">You're viewing as {{ teacher.first }}</span>
   <form method="post" action="/whoami/switch" style="display:inline;">
@@ -25,9 +41,9 @@
         You're in <strong>week {{ cycle_prog.week_current }} of {{ cycle_prog.week_total }}</strong>
         of the {{ (active_cycle.notes.splitlines()[0] if active_cycle.notes else 'current cycle')|lower }}.
       {% elif active_cycle %}
-        You're in an active coaching cycle.
+        You and your coach are in a cycle together.
       {% else %}
-        No cycle in flight right now.
+        No cycle in play right now.
       {% endif %}
     </p>
   </div>
@@ -53,7 +69,7 @@
       {% if cycle_prog.days_remaining >= 0 %}
         · {{ cycle_prog.days_remaining }} day{{ 's' if cycle_prog.days_remaining != 1 }} to go
       {% else %}
-        · {{ -cycle_prog.days_remaining }} day{{ 's' if cycle_prog.days_remaining != -1 }} past close
+        · {{ -cycle_prog.days_remaining }} day{{ 's' if cycle_prog.days_remaining != -1 }} past the close date
       {% endif %}
     </div>
   </div>
@@ -112,23 +128,23 @@
   {% if current_action.implementation %}
     <div class="tv-action-result">
       <span class="pill pill-impl-{{ current_action.implementation }}">
-        Coach assessed: {{ current_action.implementation|replace('_', ' ') }}
+        Your coach read it as: {{ _tv_impl_labels.get(current_action.implementation, current_action.implementation|replace('_', ' ')) }}
       </span>
       {% if current_action.evidence_notes %}
         <p class="muted small">{{ current_action.evidence_notes }}</p>
       {% endif %}
     </div>
   {% else %}
-    <div class="muted small">Not yet assessed — we'll look together at your next visit.</div>
+    <div class="muted small">Not read yet — you and your coach will look together at the next visit.</div>
   {% endif %}
 
   <form method="post" action="/actions/{{ current_action.id }}/teacher-account" class="tv-response-slot">
     <label for="teacher-account-{{ current_action.id }}">How do <em>you</em> see it?</label>
     <textarea id="teacher-account-{{ current_action.id }}" name="teacher_account" rows="3"
               placeholder="Your own account of trying this. What worked, what got in the way, what surprised you.">{{ current_action.teacher_account or '' }}</textarea>
-    <button type="submit">Save your account</button>
+    <button type="submit">Save it</button>
     {% if current_action.teacher_account_at %}
-      <div class="muted small">Last saved {{ current_action.teacher_account_at[:16] }}.</div>
+      <div class="muted small">Last saved {{ current_action.teacher_account_at | warmdatetime }}.</div>
     {% endif %}
   </form>
 </section>
@@ -148,7 +164,7 @@
     {% set _cycle_group = namespace(last=None) %}
     <ul class="practice-log-list">
       {% for e in practice_log %}
-      {% set _title = e.cycle_title or 'Not attached to a cycle' %}
+      {% set _title = e.cycle_title or 'Not tied to a cycle' %}
       {% if _title != _cycle_group.last %}
         <li class="practice-log-divider">{{ _title }}{% if e.cycle_closed_at %} <span class="muted small">· closed</span>{% endif %}</li>
         {% set _cycle_group.last = _title %}
@@ -156,9 +172,9 @@
       <li class="practice-log-item practice-log-{{ e.created_by_role }}">
         <div class="practice-log-head">
           <span class="pill" style="background: {% if e.created_by_role == 'teacher' %}var(--warm-bg); color: var(--warm-strong){% else %}var(--accent-tint); color: var(--accent-deep){% endif %};">
-            {{ 'you' if e.created_by_role == 'teacher' else e.created_by_role }}
+            {{ 'from you' if e.created_by_role == 'teacher' else 'from your coach' }}
           </span>
-          <span class="muted small">{{ e.created_at[:16] }}</span>
+          <span class="muted small">{{ e.created_at | warmdatetime }}</span>
           {% if e.action_skill %}
           <span class="muted small">· on <em>{{ e.action_skill }}</em></span>
           {% endif %}
@@ -171,18 +187,18 @@
     <p class="muted">Nothing logged yet — try one now.</p>
   {% endif %}
   <details class="add-form" open>
-    <summary>+ Add an entry</summary>
+    <summary>+ Add a note</summary>
     <form method="post" action="/teachers/{{ teacher.id }}/practice-log">
       {% if current_action %}
       <input type="hidden" name="action_id" value="{{ current_action.id }}">
       <div class="muted small" style="margin-bottom: 6px;">
-        Tied to your current action: <em>{{ current_action.core_teacher_skill }}</em>
+        Tied to what you're trying: <em>{{ current_action.core_teacher_skill }}</em>
       </div>
       {% endif %}
       <label>What happened when you tried?
         <textarea name="entry_text" rows="3" required placeholder="e.g. 'Tried the sentence-stem in period 3 — got two clean student-to-student exchanges without me stepping in.'"></textarea>
       </label>
-      <button type="submit">Save entry</button>
+      <button type="submit">Save the note</button>
     </form>
   </details>
 </section>
@@ -197,33 +213,33 @@
     Based on your coach's read of the last observation.
   </div>
   <p class="obs-spotlight-body">{{ current_move.move_text }}</p>
-  <div class="muted small">Published {{ current_move.published_at[:16] }}{% if current_move.edited_at %} · updated {{ current_move.edited_at[:16] }}{% endif %}</div>
+  <div class="muted small">Sent {{ current_move.published_at | warmdatetime }}{% if current_move.edited_at %} · changed {{ current_move.edited_at | warmdatetime }}{% endif %}</div>
 
   {% if response_is_stale_for_teacher %}
     <div class="stale-response-badge" style="margin-top: 12px;">
       <svg class="icon icon-sm"><use href="#icon-alert"/></svg>
       <div>
-        <strong>Your coach updated the move since you responded.</strong>
-        Take another look — your prior response was to an earlier version.
+        <strong>Your coach reworked the move since you last replied.</strong>
+        Take another look — your earlier reply was to a different version.
       </div>
     </div>
   {% endif %}
   {% if existing_hlm_response %}
     <div class="tv-hlm-existing">
       <span class="pill {{ {'resonates':'pill-impl-full','adjust':'pill-impl-partial','talk':'pill-active'}[existing_hlm_response.response_type] }}">
-        You chose: {{ {'resonates':'This resonates','adjust':'I want to adjust','talk':'Talk about it'}[existing_hlm_response.response_type] }}
+        You said: {{ {'resonates':'This resonates','adjust':'I want to adjust','talk':'Talk about it'}[existing_hlm_response.response_type] }}
       </span>
-      <span class="muted small">saved {{ existing_hlm_response.created_at[:16] }}</span>
+      <span class="muted small">saved {{ existing_hlm_response.created_at | warmdatetime }}</span>
       {% if existing_hlm_response.teacher_note %}
         <p style="margin-top:8px;">"{{ existing_hlm_response.teacher_note }}"</p>
       {% endif %}
       {% if existing_hlm_response.acknowledged_at %}
-        <div class="muted small">Coach acknowledged {{ existing_hlm_response.acknowledged_at[:16] }}.</div>
+        <div class="muted small">Your coach saw it {{ existing_hlm_response.acknowledged_at | warmdatetime }}.</div>
       {% else %}
-        <div class="muted small">Waiting on your coach to acknowledge.</div>
+        <div class="muted small">Your coach hasn't seen it yet.</div>
       {% endif %}
       <details style="margin-top:8px;">
-        <summary class="muted small">Change my response</summary>
+        <summary class="muted small">Change my reply</summary>
         <form method="post" action="/observations/{{ latest_obs.id }}/hlm-response" class="tv-negotiate-form" style="margin-top:10px;">
           <div class="tv-negotiate">
             <button type="submit" name="response_type" value="resonates" class="tv-accept">This resonates</button>
@@ -262,7 +278,7 @@
     Your coach is preparing feedback from the recent observation
   </div>
   <p class="obs-spotlight-body">{{ continuity_move.move_text }}</p>
-  <div class="muted small">Published {{ continuity_move.published_at[:16] }} — this stays your current focus until your coach publishes the next one.</div>
+  <div class="muted small">Sent {{ continuity_move.published_at | warmdatetime }} — this stays your current focus until your coach shares the next one.</div>
 </section>
 {% elif awaiting_coach %}
 <div class="section-title-row">
@@ -271,7 +287,7 @@
 <div class="empty-cta compact">
   <span class="empty-cta-icon"><svg class="icon"><use href="#icon-clock"/></svg></span>
   <h3>Your coach is preparing feedback</h3>
-  <p>Your last observation is being reviewed. Check back in a day or two.</p>
+  <p>Your last observation is being read. Check back in a day or two.</p>
 </div>
 {% endif %}
 
@@ -279,7 +295,7 @@
 <div class="deep-dive-divider">
   <div class="deep-dive-title">
     <svg class="icon icon-sm"><use href="#icon-lesson-plan"/></svg>
-    More about you — expand for detail
+    More about you — click to open
   </div>
   <nav class="jump-to-strip" aria-label="Jump to reference section">
     <a href="#growing">How you're growing</a>
@@ -299,13 +315,13 @@
     {% if profile.skill_development_narrative %}
     <section class="card narrative-card">
       <div class="narrative-body">{{ profile.skill_development_narrative }}</div>
-      <div class="muted small" style="margin-top:12px;">— written by your coach · updated as the coaching relationship evolves</div>
+      <div class="muted small" style="margin-top:12px;">— written by your coach · updated as your work together evolves</div>
     </section>
     {% else %}
     <div class="empty-cta compact">
       <span class="empty-cta-icon"><svg class="icon"><use href="#icon-sparkle"/></svg></span>
       <h3>Your growth story isn't written yet</h3>
-      <p>Your coach hasn't yet drafted the running narrative of what you're working to master. Ask them to start one at your next debrief.</p>
+      <p>Your coach hasn't started the running story of what you're working to master. Ask them to write one at your next debrief.</p>
     </div>
     {% endif %}
 
@@ -328,7 +344,7 @@
       <tbody>
         {% for m in movement %}
         <tr>
-          <td class="muted small">{{ m.scored_at[:10] if m.scored_at else '—' }}</td>
+          <td class="muted small">{{ m.scored_at | warmdate if m.scored_at else '—' }}</td>
           {% for d in domains %}
             {% set r = m.ratings.get(d) %}
             <td>
@@ -385,7 +401,7 @@
     {% for o in observations %}
     <li>
       <a href="/observations/{{ o.id }}"><strong>{{ o.video_filename }}</strong></a>
-      <span class="muted small">{{ o.uploaded_at[:10] if o.uploaded_at else '' }}</span>
+      <span class="muted small">{{ o.uploaded_at | warmdate if o.uploaded_at else '' }}</span>
     </li>
     {% endfor %}
   </ul>
@@ -407,7 +423,7 @@
     {% for p in lesson_plans %}
     <li>
       <a href="/lesson-plans/{{ p.id }}"><strong>{{ p.title }}</strong></a>
-      <span class="pill pill-{{ p.status }}">{{ p.status|replace('_', ' ') }}</span>
+      <span class="pill pill-{{ p.status }}">{{ _tv_plan_status_labels.get(p.status, p.status|replace('_', ' ')) }}</span>
       <span class="muted small">v{{ p.current_version }}</span>
     </li>
     {% endfor %}
