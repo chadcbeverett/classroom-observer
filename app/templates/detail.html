@@ -17,6 +17,20 @@
 <p class="crumbs"><a href="/teachers/{{ obs.teacher_id }}">← {{ obs.teacher }}</a></p>
 
 {% set _viewer_role = current_role(request) %}
+{% if obs.deleted_at and _viewer_role != 'teacher' %}
+<section class="card" style="background:#f8f5ec; border-color:#e6dfc9; margin-bottom: 16px;">
+  <div style="display:flex; justify-content: space-between; align-items:center; gap: 12px; flex-wrap: wrap;">
+    <div>
+      <strong>This observation is archived.</strong>
+      <span class="muted small">Off the dashboards since {{ obs.deleted_at }}. Ratings and cycle counts skip it.</span>
+    </div>
+    <form method="post" action="/observations/{{ obs.id }}/restore" style="margin: 0;">
+      <button type="submit" class="button-link">Restore it</button>
+    </form>
+  </div>
+</section>
+{% endif %}
+
 {% if _viewer_role == 'teacher' %}
 <div class="teacher-view-banner">
   <span class="banner-label">This is your coach's page for the observation.</span>
@@ -735,6 +749,27 @@
 {% endif %}
 {% elif obs.status == 'complete' and _viewer_role != 'teacher' %}
 <p class="muted">No write-up on file for this observation.</p>
+{% endif %}
+
+{% if not obs.deleted_at and _viewer_role != 'teacher' %}
+<section class="card" style="margin-top: 24px; background: #fafafa;">
+  <details>
+    <summary class="muted small" style="cursor: pointer;">
+      Archive this observation (mis-upload, wrong teacher, uploaded twice)
+    </summary>
+    <div style="margin-top: 12px;">
+      <p class="muted small">
+        Hides it from the roster, ratings rollup, cycle counts, and compliance report.
+        The video and the coach's move stay attached to the record; you can restore later.
+      </p>
+      <form method="post" action="/observations/{{ obs.id }}/archive"
+            onsubmit="return confirm('Archive this observation? It stops showing on dashboards; you can restore.');"
+            style="margin: 0;">
+        <button type="submit" class="button-link secondary">Archive this observation</button>
+      </form>
+    </div>
+  </details>
+</section>
 {% endif %}
 
 {% endblock %}

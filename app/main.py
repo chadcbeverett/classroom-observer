@@ -57,6 +57,9 @@ from pipeline.db import (
     carry_forward_goal, set_action_goal, list_actions_for_goal,
     add_practice_log_entry, list_practice_log_for_teacher,
     bulk_create_teacher, ArchivedTeacherError,
+    archive_teacher, restore_teacher,
+    archive_observation, restore_observation,
+    delete_private_note,
 )
 from pipeline.gbf import STEPS as GBF_STEPS, STEPS_BY_ID as GBF_STEPS_BY_ID, all_steps_by_phase
 from pipeline.rubric import DEFAULT_RUBRIC_ID, RUBRICS, get_rubric
@@ -279,7 +282,8 @@ def _next_obs_due(conn, teacher_id: str, days_between_target: Optional[int]) -> 
     from datetime import datetime as _d, timedelta as _td, date as _date
     row = conn.execute(
         """SELECT MAX(COALESCE(observed_at, scored_at, uploaded_at)) AS last_at
-           FROM observations WHERE teacher_id = ? AND status = 'complete'""",
+           FROM observations
+           WHERE teacher_id = ? AND status = 'complete' AND deleted_at IS NULL""",
         (teacher_id,),
     ).fetchone()
     if not row or not row["last_at"]:
@@ -469,9 +473,11 @@ def dashboard_home(request: Request) -> HTMLResponse:
     rubric = get_rubric(DEFAULT_RUBRIC_ID)
     conn = db_connect(DB_PATH)
     try:
-        # Observation counts
+        # Observation counts (archived observations drop out of aggregates)
         obs_counts = {"total": 0, "in_flight": 0, "complete": 0, "failed": 0}
-        for row in conn.execute("SELECT status, COUNT(*) AS c FROM observations GROUP BY status"):
+        for row in conn.execute(
+            "SELECT status, COUNT(*) AS c FROM observations WHERE deleted_at IS NULL GROUP BY status"
+        ):
             obs_counts["total"] += row["c"]
             if row["status"] == "complete":
                 obs_counts["complete"] += row["c"]
@@ -511,7 +517,8 @@ def dashboard_home(request: Request) -> HTMLResponse:
         for row in conn.execute(
             """SELECT rv.domain_assessments FROM report_versions rv
                JOIN observations o ON o.id = rv.observation_id
-               WHERE o.status = 'complete' AND rv.published_at IS NOT NULL"""
+               WHERE o.status = 'complete' AND o.deleted_at IS NULL
+                 AND rv.published_at IS NOT NULL"""
         ):
             try:
                 das = json.loads(row["domain_assessments"] or "[]")
@@ -529,6 +536,7 @@ def dashboard_home(request: Request) -> HTMLResponse:
                       t.name AS teacher_name
                FROM observations o
                JOIN teachers t ON t.id = o.teacher_id
+               WHERE o.deleted_at IS NULL AND t.archived_at IS NULL
                ORDER BY o.uploaded_at DESC LIMIT 8"""
         ).fetchall()
 
@@ -561,6 +569,7 @@ def dashboard_home(request: Request) -> HTMLResponse:
                                   WHERE pcm.observation_id = o.id AND pcm.superseded_at IS NULL) AS no_move
                FROM observations o JOIN teachers t ON t.id = o.teacher_id
                WHERE o.status = 'complete'
+                 AND o.deleted_at IS NULL AND t.archived_at IS NULL
                  AND o.scored_at IS NOT NULL AND o.scored_at < ?
                  AND ((o.debrief_focus IS NULL OR o.debrief_focus = '')
                       OR NOT EXISTS (SELECT 1 FROM published_coach_moves pcm
@@ -575,7 +584,9 @@ def dashboard_home(request: Request) -> HTMLResponse:
                       ba.source_observation_id
                FROM bite_sized_action_tracking ba
                JOIN teachers t ON t.id = ba.teacher_id
+               JOIN observations src ON src.id = ba.source_observation_id
                WHERE ba.implementation IS NULL AND ba.created_at < ?
+                 AND src.deleted_at IS NULL AND t.archived_at IS NULL
                ORDER BY ba.created_at ASC LIMIT 5""",
             (_7d,),
         ).fetchall()]
@@ -690,9 +701,10 @@ def dashboard_home(request: Request) -> HTMLResponse:
             """SELECT t.id, t.name,
                       MAX(COALESCE(o.uploaded_at, o.scored_at, t.created_at)) AS last_activity,
                       (SELECT COUNT(*) FROM observations o2
-                       WHERE o2.teacher_id = t.id) AS obs_count
+                       WHERE o2.teacher_id = t.id AND o2.deleted_at IS NULL) AS obs_count
                FROM teachers t
-               LEFT JOIN observations o ON o.teacher_id = t.id
+               LEFT JOIN observations o
+                      ON o.teacher_id = t.id AND o.deleted_at IS NULL
                WHERE t.archived_at IS NULL
                GROUP BY t.id
                ORDER BY last_activity DESC LIMIT 6"""
@@ -758,6 +770,7 @@ def list_observations(request: Request) -> HTMLResponse:
                FROM observations o
                JOIN teachers t ON t.id = o.teacher_id
                JOIN rubrics  r ON r.id = o.rubric_id
+               WHERE o.deleted_at IS NULL
                ORDER BY o.uploaded_at DESC"""
         ).fetchall()
 
@@ -1089,6 +1102,9 @@ def observation_detail(request: Request, observation_id: str) -> HTMLResponse:
             "scored_at": _fmt_ts(obs["scored_at"]),
             "debrief_focus": obs["debrief_focus"],
             "debrief_focus_gbf_id": obs["debrief_focus_gbf_id"],
+            # Archive state — templates render a restore banner + hide the
+            # archive control when the observation is already archived.
+            "deleted_at": _fmt_ts(obs["deleted_at"]) if obs["deleted_at"] else None,
         },
         "ratings": ratings,
         "domain_assessments": domain_assessments,
@@ -1622,22 +1638,43 @@ def _compose_report_markdown(
 
 
 @app.get("/teachers", response_class=HTMLResponse)
-def teachers_list(request: Request) -> HTMLResponse:
-    """Roster view — one row per teacher with a compact trend indicator per domain."""
+def teachers_list(request: Request, show_archived: int = 0) -> HTMLResponse:
+    """Roster view — one row per teacher with a compact trend indicator per domain.
+
+    ``show_archived=1`` swaps the roster from "active teachers" to "archived
+    teachers", so the coach can find and restore one. The two modes render
+    the same template with different rows.
+    """
     _deny_teacher(_current_viewer(request), "Roster")
     rubric = get_rubric(DEFAULT_RUBRIC_ID)
     conn = db_connect(DB_PATH)
     try:
-        teachers = conn.execute(
-            """SELECT t.id, t.name,
-                      (SELECT COUNT(*) FROM observations o
-                       WHERE o.teacher_id = t.id AND o.status = 'complete') AS obs_count,
-                      (SELECT MAX(o.scored_at) FROM observations o
-                       WHERE o.teacher_id = t.id AND o.status = 'complete') AS last_scored
-               FROM teachers t
-               WHERE t.archived_at IS NULL
-               ORDER BY t.name"""
-        ).fetchall()
+        if show_archived:
+            teachers = conn.execute(
+                """SELECT t.id, t.name, t.archived_at,
+                          (SELECT COUNT(*) FROM observations o
+                           WHERE o.teacher_id = t.id AND o.status = 'complete'
+                                 AND o.deleted_at IS NULL) AS obs_count,
+                          (SELECT MAX(o.scored_at) FROM observations o
+                           WHERE o.teacher_id = t.id AND o.status = 'complete'
+                                 AND o.deleted_at IS NULL) AS last_scored
+                   FROM teachers t
+                   WHERE t.archived_at IS NOT NULL
+                   ORDER BY t.archived_at DESC"""
+            ).fetchall()
+        else:
+            teachers = conn.execute(
+                """SELECT t.id, t.name, t.archived_at,
+                          (SELECT COUNT(*) FROM observations o
+                           WHERE o.teacher_id = t.id AND o.status = 'complete'
+                                 AND o.deleted_at IS NULL) AS obs_count,
+                          (SELECT MAX(o.scored_at) FROM observations o
+                           WHERE o.teacher_id = t.id AND o.status = 'complete'
+                                 AND o.deleted_at IS NULL) AS last_scored
+                   FROM teachers t
+                   WHERE t.archived_at IS NULL
+                   ORDER BY t.name"""
+            ).fetchall()
 
         rows = []
         for t in teachers:
@@ -1663,12 +1700,17 @@ def teachers_list(request: Request) -> HTMLResponse:
             rows.append({
                 "id": t["id"],
                 "name": t["name"],
+                "archived_at": t["archived_at"],
                 "obs_count": t["obs_count"],
                 "last_scored": _fmt_ts(t["last_scored"]),
                 "trend_by_domain": trend_by_domain,
                 "active_goal_count": len(open_goals),
                 "open_action_count": len(open_actions),
             })
+
+        archived_count = conn.execute(
+            "SELECT COUNT(*) AS c FROM teachers WHERE archived_at IS NOT NULL"
+        ).fetchone()["c"]
     finally:
         conn.close()
 
@@ -1677,6 +1719,8 @@ def teachers_list(request: Request) -> HTMLResponse:
         "teachers": rows,
         "domains": rubric.domains,
         "rubric": rubric,
+        "show_archived": bool(show_archived),
+        "archived_count": archived_count,
     })
 
 
@@ -1701,7 +1745,7 @@ def teacher_detail(request: Request, teacher_id: str) -> HTMLResponse:
     conn = db_connect(DB_PATH)
     try:
         teacher = conn.execute(
-            "SELECT id, name FROM teachers WHERE id = ?", (teacher_id,)
+            "SELECT id, name, archived_at FROM teachers WHERE id = ?", (teacher_id,)
         ).fetchone()
         if not teacher:
             raise HTTPException(404, "Teacher not found")
@@ -1726,15 +1770,17 @@ def teacher_detail(request: Request, teacher_id: str) -> HTMLResponse:
             private_notes = []
         practice_log = list_practice_log_for_teacher(conn, teacher_id, limit=20)
 
-        # Observations list (all, latest first)
+        # Observations list (all, latest first). Archived observations drop
+        # out of the main list; the coach reaches them via a separate
+        # "Show archived observations" toggle rendered on the hub.
         observations = conn.execute(
             """SELECT o.id, o.video_filename, o.status, o.scored_at,
-                      o.uploaded_at, o.failure_reason,
+                      o.uploaded_at, o.failure_reason, o.deleted_at,
                       (SELECT rv.domain_assessments FROM report_versions rv
                        WHERE rv.observation_id = o.id
                        ORDER BY rv.version_number DESC LIMIT 1) AS latest_das
                FROM observations o
-               WHERE o.teacher_id = ?
+               WHERE o.teacher_id = ? AND o.deleted_at IS NULL
                ORDER BY o.uploaded_at DESC""",
             (teacher_id,),
         ).fetchall()
@@ -1751,6 +1797,31 @@ def teacher_detail(request: Request, teacher_id: str) -> HTMLResponse:
                 "uploaded_at": _fmt_ts(o["uploaded_at"]),
                 "ratings": ratings,
             })
+
+        # Count of this teacher's archived observations — used to render the
+        # "Show N archived" toggle on the hub. The toggle expands into a
+        # separate list below via the `archived_obs` view state.
+        archived_obs_count = conn.execute(
+            """SELECT COUNT(*) AS c FROM observations
+               WHERE teacher_id = ? AND deleted_at IS NOT NULL""",
+            (teacher_id,),
+        ).fetchone()["c"]
+        archived_obs = conn.execute(
+            """SELECT o.id, o.video_filename, o.status, o.scored_at,
+                      o.uploaded_at, o.deleted_at
+               FROM observations o
+               WHERE o.teacher_id = ? AND o.deleted_at IS NOT NULL
+               ORDER BY o.deleted_at DESC""",
+            (teacher_id,),
+        ).fetchall() if archived_obs_count else []
+        archived_obs_rows = [{
+            "id": o["id"],
+            "video_filename": o["video_filename"],
+            "status": o["status"],
+            "scored_at": _fmt_ts(o["scored_at"]),
+            "uploaded_at": _fmt_ts(o["uploaded_at"]),
+            "deleted_at": _fmt_ts(o["deleted_at"]),
+        } for o in archived_obs]
 
         # --- Teacher-scoped attention items ---
         from datetime import datetime, timezone, timedelta, date as _date
@@ -1772,6 +1843,7 @@ def teacher_detail(request: Request, teacher_id: str) -> HTMLResponse:
         for r in conn.execute(
             """SELECT id, scored_at FROM observations
                WHERE teacher_id = ? AND status = 'complete'
+                 AND deleted_at IS NULL
                  AND (debrief_focus IS NULL OR debrief_focus = '')
                  AND scored_at IS NOT NULL AND scored_at < ?
                ORDER BY scored_at DESC LIMIT 3""",
@@ -1902,7 +1974,10 @@ def teacher_detail(request: Request, teacher_id: str) -> HTMLResponse:
 
     return TEMPLATES.TemplateResponse("teacher_detail.html", {
         "request": request,
-        "teacher": {"id": teacher["id"], "name": teacher["name"]},
+        "teacher": {
+            "id": teacher["id"], "name": teacher["name"],
+            "archived_at": teacher["archived_at"],
+        },
         "avatar_idx": _av_idx,
         "hero_summary": _hero_summary,
         "t_attention": t_attention,
@@ -1920,6 +1995,8 @@ def teacher_detail(request: Request, teacher_id: str) -> HTMLResponse:
         "open_actions": open_actions,
         "private_notes": private_notes,
         "observations": obs_rows,
+        "archived_observations": archived_obs_rows,
+        "archived_obs_count": archived_obs_count,
         "domains": rubric.domains,
         "rubric": rubric,
         "self_rating_dimensions": SELF_RATING_DIMENSIONS,
@@ -2044,6 +2121,7 @@ def teacher_facing_view(request: Request, teacher_id: str) -> HTMLResponse:
             """SELECT o.id, o.video_filename, o.scored_at, o.uploaded_at, o.status
                FROM observations o
                WHERE o.teacher_id = ? AND o.status = 'complete'
+                 AND o.deleted_at IS NULL
                ORDER BY o.scored_at DESC LIMIT 1""",
             (teacher_id,),
         ).fetchone()
@@ -2060,13 +2138,16 @@ def teacher_facing_view(request: Request, teacher_id: str) -> HTMLResponse:
             continuity_move = most_recent_published_move_for_teacher(conn, teacher_id)
 
         # Current bite-sized action (latest unassessed for this teacher).
+        # Filter out actions whose source observation was archived.
         current_action_row = conn.execute(
-            """SELECT id, core_teacher_skill, related_domain, bite_sized_action_text,
-                      created_at, implementation, evidence_notes,
-                      teacher_account, teacher_account_at
-               FROM bite_sized_action_tracking
-               WHERE teacher_id = ?
-               ORDER BY (implementation IS NULL) DESC, created_at DESC
+            """SELECT bsat.id, bsat.core_teacher_skill, bsat.related_domain,
+                      bsat.bite_sized_action_text,
+                      bsat.created_at, bsat.implementation, bsat.evidence_notes,
+                      bsat.teacher_account, bsat.teacher_account_at
+               FROM bite_sized_action_tracking bsat
+               JOIN observations src ON src.id = bsat.source_observation_id
+               WHERE bsat.teacher_id = ? AND src.deleted_at IS NULL
+               ORDER BY (bsat.implementation IS NULL) DESC, bsat.created_at DESC
                LIMIT 1""",
             (teacher_id,),
         ).fetchone()
@@ -2088,7 +2169,7 @@ def teacher_facing_view(request: Request, teacher_id: str) -> HTMLResponse:
         # Their observations list (compact).
         obs_rows = [dict(r) for r in conn.execute(
             """SELECT id, video_filename, status, uploaded_at, scored_at
-               FROM observations WHERE teacher_id = ?
+               FROM observations WHERE teacher_id = ? AND deleted_at IS NULL
                ORDER BY uploaded_at DESC LIMIT 8""",
             (teacher_id,),
         ).fetchall()]
@@ -2489,7 +2570,7 @@ def close_cycle_route(
     conn = db_connect(DB_PATH)
     try:
         n_obs = conn.execute(
-            "SELECT COUNT(*) AS c FROM observations WHERE coaching_cycle_id = ? AND status = 'complete'",
+            "SELECT COUNT(*) AS c FROM observations WHERE coaching_cycle_id = ? AND status = 'complete' AND deleted_at IS NULL",
             (cycle_id,),
         ).fetchone()["c"]
         n_goals = conn.execute(
@@ -2509,7 +2590,8 @@ def close_cycle_route(
         n_unassessed_actions = conn.execute(
             """SELECT COUNT(*) AS c FROM bite_sized_action_tracking ba
                WHERE ba.source_observation_id IN (
-                   SELECT id FROM observations WHERE coaching_cycle_id = ?
+                   SELECT id FROM observations
+                   WHERE coaching_cycle_id = ? AND deleted_at IS NULL
                ) AND ba.implementation IS NULL""",
             (cycle_id,),
         ).fetchone()["c"]
@@ -2519,7 +2601,8 @@ def close_cycle_route(
         n_unacked_hlm = conn.execute(
             """SELECT COUNT(*) AS c FROM hlm_responses hr
                WHERE hr.observation_id IN (
-                   SELECT id FROM observations WHERE coaching_cycle_id = ?
+                   SELECT id FROM observations
+                   WHERE coaching_cycle_id = ? AND deleted_at IS NULL
                ) AND hr.acknowledged_at IS NULL
                  AND hr.response_type IN ('adjust', 'talk')""",
             (cycle_id,),
@@ -2530,6 +2613,7 @@ def close_cycle_route(
         n_obs_without_move = conn.execute(
             """SELECT COUNT(*) AS c FROM observations o
                WHERE o.coaching_cycle_id = ? AND o.status = 'complete'
+                 AND o.deleted_at IS NULL
                  AND NOT EXISTS (
                      SELECT 1 FROM published_coach_moves pcm
                      WHERE pcm.observation_id = o.id AND pcm.superseded_at IS NULL
@@ -3421,6 +3505,123 @@ def add_private_note_route(
     return RedirectResponse(url=f"/teachers/{teacher_id}", status_code=303)
 
 
+@app.post("/teachers/{teacher_id}/private-notes/{note_id}/delete")
+def delete_private_note_route(
+    request: Request,
+    teacher_id: str,
+    note_id: str,
+    next: Optional[str] = Form(None),
+) -> RedirectResponse:
+    """Coach-only: delete one of the coach's own private notes. Hard delete —
+    the note is the coach's scratchpad, not a record.
+
+    Author guard is enforced at the storage layer: the note is removed only
+    when its ``author_user_id`` matches the caller. Today, single-user auth
+    means every coach viewer IS the author; the guard is defense-in-depth
+    for a future multi-coach world.
+    """
+    _require_coach(_current_viewer(request), "Private-note delete")
+    conn = db_connect(DB_PATH)
+    try:
+        delete_private_note(
+            conn, note_id=note_id, author_user_id=_SEEDED_IDS["user_id"]
+        )
+    finally:
+        conn.close()
+    dest = next if (next and _is_safe_same_origin_path(next)) else f"/teachers/{teacher_id}"
+    return RedirectResponse(url=dest, status_code=303)
+
+
+# ---------------------------------------------------------------------------
+# Archive / restore — teachers and observations.
+#
+# Teachers archive with a cascade (see pipeline.db.archive_teacher). Restore
+# un-archives but does not un-cascade — a restored teacher starts fresh.
+# Observations archive using the existing `deleted_at` slot; aggregates
+# filter it out but by-id lookups still work so the coach can restore.
+# ---------------------------------------------------------------------------
+
+
+@app.post("/teachers/{teacher_id}/archive")
+def archive_teacher_route(
+    request: Request, teacher_id: str
+) -> RedirectResponse:
+    _require_coach(_current_viewer(request), "Teacher archive")
+    conn = db_connect(DB_PATH)
+    try:
+        summary = archive_teacher(conn, teacher_id=teacher_id)
+    finally:
+        conn.close()
+    # Roster is the natural landing after archive — the teacher's hub still
+    # loads (by-id lookups aren't filtered), but the coach is done with it
+    # for now. Carry a tiny summary in the query string for the toast.
+    from urllib.parse import urlencode
+    q = urlencode({
+        "archived": teacher_id,
+        "cycles_closed": summary["cycles_closed"],
+        "goals_abandoned": summary["goals_abandoned"],
+        "plans_archived": summary["plans_archived"],
+    })
+    return RedirectResponse(url=f"/teachers?{q}", status_code=303)
+
+
+@app.post("/teachers/{teacher_id}/restore")
+def restore_teacher_route(
+    request: Request, teacher_id: str
+) -> RedirectResponse:
+    _require_coach(_current_viewer(request), "Teacher restore")
+    conn = db_connect(DB_PATH)
+    try:
+        restore_teacher(conn, teacher_id=teacher_id)
+    finally:
+        conn.close()
+    return RedirectResponse(url=f"/teachers/{teacher_id}", status_code=303)
+
+
+@app.post("/observations/{observation_id}/archive")
+def archive_observation_route(
+    request: Request, observation_id: str
+) -> RedirectResponse:
+    """Soft-delete an observation. Mis-uploads (wrong teacher, bad video,
+    uploaded twice) drop out of aggregates. Related rows stay (the coach's
+    published move, the action tracking row, the HLM response) — keeping
+    the trail matters for audit; aggregate queries join through the
+    observation and filter ``o.deleted_at IS NULL``.
+    """
+    _require_coach(_current_viewer(request), "Observation archive")
+    conn = db_connect(DB_PATH)
+    try:
+        # Get teacher_id for the redirect back to their hub — that's where
+        # the coach was, and where they'll notice the observation now missing.
+        row = conn.execute(
+            "SELECT teacher_id FROM observations WHERE id = ?", (observation_id,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "Observation not found")
+        archive_observation(conn, observation_id=observation_id)
+    finally:
+        conn.close()
+    return RedirectResponse(
+        url=f"/teachers/{row['teacher_id']}?archived_obs={observation_id}",
+        status_code=303,
+    )
+
+
+@app.post("/observations/{observation_id}/restore")
+def restore_observation_route(
+    request: Request, observation_id: str
+) -> RedirectResponse:
+    _require_coach(_current_viewer(request), "Observation restore")
+    conn = db_connect(DB_PATH)
+    try:
+        restore_observation(conn, observation_id=observation_id)
+    finally:
+        conn.close()
+    return RedirectResponse(
+        url=f"/observations/{observation_id}", status_code=303
+    )
+
+
 # ---------------------------------------------------------------------------
 # Viewer switching + two-sided negotiation routes
 # ---------------------------------------------------------------------------
@@ -3692,7 +3893,8 @@ def principal_dashboard(request: Request) -> HTMLResponse:
         for row in conn.execute(
             """SELECT rv.domain_assessments FROM report_versions rv
                JOIN observations o ON o.id = rv.observation_id
-               WHERE o.status = 'complete' AND rv.published_at IS NOT NULL"""
+               WHERE o.status = 'complete' AND o.deleted_at IS NULL
+                 AND rv.published_at IS NOT NULL"""
         ):
             try:
                 das = json.loads(row["domain_assessments"] or "[]")
@@ -3770,7 +3972,7 @@ def principal_dashboard(request: Request) -> HTMLResponse:
         # Teachers at-a-glance.
         teachers = [dict(r) for r in conn.execute(
             """SELECT t.id, t.name,
-                      (SELECT COUNT(*) FROM observations WHERE teacher_id=t.id AND status='complete') AS obs_count,
+                      (SELECT COUNT(*) FROM observations WHERE teacher_id=t.id AND status='complete' AND deleted_at IS NULL) AS obs_count,
                       (SELECT COUNT(*) FROM coaching_cycles WHERE teacher_id=t.id AND closed_at IS NULL) AS active_cycles,
                       (SELECT COUNT(*) FROM professional_goals WHERE teacher_id=t.id AND status IN ('active','proposed')) AS active_goals
                FROM teachers t
@@ -3789,6 +3991,7 @@ def principal_dashboard(request: Request) -> HTMLResponse:
                LEFT JOIN published_coach_moves pcm ON pcm.observation_id = o.id AND pcm.superseded_at IS NULL
                LEFT JOIN report_versions rv ON rv.observation_id = o.id AND rv.published_at IS NOT NULL
                WHERE o.status = 'complete'
+                 AND o.deleted_at IS NULL AND t.archived_at IS NULL
                ORDER BY o.scored_at DESC LIMIT 8"""
         ).fetchall():
             ai_move_text = None
@@ -3866,7 +4069,7 @@ def district_dashboard(request: Request) -> HTMLResponse:
             ).fetchone()["c"]
             obs_count = conn.execute(
                 "SELECT COUNT(*) AS c FROM observations o JOIN teachers t ON t.id = o.teacher_id "
-                "WHERE t.org_id = ? AND o.status = 'complete'",
+                "WHERE t.org_id = ? AND o.status = 'complete' AND o.deleted_at IS NULL AND t.archived_at IS NULL",
                 (oid,),
             ).fetchone()["c"]
             active_cycles = conn.execute(
@@ -3877,7 +4080,8 @@ def district_dashboard(request: Request) -> HTMLResponse:
             moves_pub = conn.execute(
                 "SELECT COUNT(*) AS c FROM published_coach_moves pcm "
                 "JOIN observations o ON o.id = pcm.observation_id "
-                "JOIN teachers t ON t.id = o.teacher_id WHERE t.org_id = ?",
+                "JOIN teachers t ON t.id = o.teacher_id "
+                "WHERE t.org_id = ? AND o.deleted_at IS NULL AND t.archived_at IS NULL",
                 (oid,),
             ).fetchone()["c"]
             # School-level rating distribution — sum weak-rating counts.
@@ -3889,7 +4093,9 @@ def district_dashboard(request: Request) -> HTMLResponse:
                     """SELECT rv.domain_assessments FROM report_versions rv
                        JOIN observations o ON o.id = rv.observation_id
                        JOIN teachers t ON t.id = o.teacher_id
-                       WHERE t.org_id = ? AND o.status='complete' AND rv.published_at IS NOT NULL""",
+                       WHERE t.org_id = ? AND o.status='complete'
+                         AND o.deleted_at IS NULL AND t.archived_at IS NULL
+                         AND rv.published_at IS NOT NULL""",
                     (oid,),
                 ):
                     try:
@@ -4134,7 +4340,7 @@ def _compliance_rows(conn, *, target: int, academic_year: str) -> list:
     ).fetchall():
         obs_count = conn.execute(
             """SELECT COUNT(*) AS c FROM observations
-               WHERE teacher_id = ? AND status = 'complete'
+               WHERE teacher_id = ? AND status = 'complete' AND deleted_at IS NULL
                  AND COALESCE(observed_at, scored_at, uploaded_at) >= ?
                  AND COALESCE(observed_at, scored_at, uploaded_at) < ?""",
             (t["id"], year_start, year_end_exclusive),
@@ -4143,6 +4349,7 @@ def _compliance_rows(conn, *, target: int, academic_year: str) -> list:
             """SELECT MIN(COALESCE(observed_at, scored_at, uploaded_at)) AS first_at,
                       MAX(COALESCE(observed_at, scored_at, uploaded_at)) AS last_at
                FROM observations WHERE teacher_id = ? AND status = 'complete'
+                 AND deleted_at IS NULL
                  AND COALESCE(observed_at, scored_at, uploaded_at) >= ?
                  AND COALESCE(observed_at, scored_at, uploaded_at) < ?""",
             (t["id"], year_start, year_end_exclusive),

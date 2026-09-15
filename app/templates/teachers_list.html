@@ -1,25 +1,65 @@
 {% extends "base.html" %}
-{% block title %}Teachers · Classroom Observer{% endblock %}
+{% block title %}{% if show_archived %}Archived teachers{% else %}Teachers{% endif %} · Classroom Observer{% endblock %}
 {% block content %}
 
 <div class="page-header">
   <div>
-    <h1><svg class="icon icon-lg"><use href="#icon-teachers"/></svg>Teachers on your caseload</h1>
-    <p class="muted">Where each of them is, per rubric domain.</p>
+    {% if show_archived %}
+      <h1><svg class="icon icon-lg"><use href="#icon-teachers"/></svg>Archived teachers</h1>
+      <p class="muted">Off your active caseload. Restore one to pick them back up — you'll start fresh with a new cycle and goal.</p>
+    {% else %}
+      <h1><svg class="icon icon-lg"><use href="#icon-teachers"/></svg>Teachers on your caseload</h1>
+      <p class="muted">Where each of them is, per rubric domain.</p>
+    {% endif %}
   </div>
   <div class="page-header-meta">
     <span class="count-chip">{{ teachers|length }} teacher{{ 's' if teachers|length != 1 }}</span>
   </div>
 </div>
 
+{% if request.query_params.get('archived') %}
+  <div class="card" style="background:#f8f5ec; border-color:#e6dfc9; margin-bottom: 16px;">
+    <strong>Archived.</strong>
+    {% set _cc = request.query_params.get('cycles_closed')|int %}
+    {% set _gc = request.query_params.get('goals_abandoned')|int %}
+    {% set _pc = request.query_params.get('plans_archived')|int %}
+    {% if _cc or _gc or _pc %}
+      Along with the teacher, we closed
+      {% if _cc %}{{ _cc }} open cycle{{ 's' if _cc != 1 }}{% if _gc or _pc %}, {% endif %}{% endif %}
+      {% if _gc %}{{ _gc }} goal{{ 's' if _gc != 1 }}{% if _pc %}, {% endif %}{% endif %}
+      {% if _pc %}{{ _pc }} lesson plan{{ 's' if _pc != 1 }}{% endif %}.
+    {% else %}
+      Nothing was in flight — nothing else to close.
+    {% endif %}
+  </div>
+{% endif %}
+
+<div style="margin: 12px 0 20px; display: flex; gap: 8px; align-items: center;">
+  {% if show_archived %}
+    <a class="button-link secondary" href="/teachers">← Back to active caseload</a>
+  {% elif archived_count %}
+    <a class="button-link secondary" href="/teachers?show_archived=1">
+      Show archived ({{ archived_count }})
+    </a>
+  {% endif %}
+</div>
+
 {% if not teachers %}
   <div class="empty-cta">
     <span class="empty-cta-icon"><svg class="icon"><use href="#icon-teachers"/></svg></span>
-    <h3>No teachers yet</h3>
-    <p>Bring in an observation and a teacher will be added along with it.</p>
-    <a class="button-link" href="/observations">
-      <svg class="icon icon-sm"><use href="#icon-arrow-right"/></svg>Bring in an observation
-    </a>
+    {% if show_archived %}
+      <h3>Nothing archived</h3>
+      <p>No teachers are archived right now.</p>
+      <a class="button-link" href="/teachers">
+        <svg class="icon icon-sm"><use href="#icon-arrow-right"/></svg>Back to active caseload
+      </a>
+    {% else %}
+      <h3>No teachers yet</h3>
+      <p>Bring in an observation and a teacher will be added along with it.</p>
+      <a class="button-link" href="/observations">
+        <svg class="icon icon-sm"><use href="#icon-arrow-right"/></svg>Bring in an observation
+      </a>
+    {% endif %}
   </div>
 {% else %}
 <section class="card" style="padding: 0; overflow: hidden;">
@@ -30,11 +70,15 @@
       <th>Teacher</th>
       <th>Observations</th>
       <th>Last read</th>
-      {% for d in domains %}
-      <th title="{{ d }}">{{ d.split(' ')[0][:3]|upper }}</th>
-      {% endfor %}
-      <th>Goals</th>
-      <th>Moves</th>
+      {% if show_archived %}
+        <th>Archived on</th>
+      {% else %}
+        {% for d in domains %}
+        <th title="{{ d }}">{{ d.split(' ')[0][:3]|upper }}</th>
+        {% endfor %}
+        <th>Goals</th>
+        <th>Moves</th>
+      {% endif %}
       <th></th>
     </tr>
   </thead>
@@ -49,22 +93,31 @@
       <td><a href="/teachers/{{ t.id }}" class="row-title">{{ t.name }}</a></td>
       <td>{{ t.obs_count }}</td>
       <td class="muted small">{{ t.last_scored | warmdate }}</td>
-      {% for d in domains %}
-        {% set td = t.trend_by_domain[d] %}
+      {% if show_archived %}
+        <td class="muted small">{{ t.archived_at | warmdate }}</td>
         <td>
-          {% if td.rating %}
-            <span class="rating rating-{{ td.rating|replace(' ', '-')|lower }}">{{ td.rating[:3]|upper }}</span>
-            <span class="trend trend-{{ td.trend }}">
-              {%- if td.trend == 'up' %}↑{% elif td.trend == 'down' %}↓{% elif td.trend == 'flat' %}·{% endif -%}
-            </span>
-          {% else %}
-            <span class="muted small">—</span>
-          {% endif %}
+          <form method="post" action="/teachers/{{ t.id }}/restore" style="display:inline;">
+            <button type="submit" class="button-link">Restore</button>
+          </form>
         </td>
-      {% endfor %}
-      <td>{{ t.active_goal_count }}</td>
-      <td>{{ t.open_action_count }}</td>
-      <td><a class="button-link" href="/teachers/{{ t.id }}">Open</a></td>
+      {% else %}
+        {% for d in domains %}
+          {% set td = t.trend_by_domain[d] %}
+          <td>
+            {% if td.rating %}
+              <span class="rating rating-{{ td.rating|replace(' ', '-')|lower }}">{{ td.rating[:3]|upper }}</span>
+              <span class="trend trend-{{ td.trend }}">
+                {%- if td.trend == 'up' %}↑{% elif td.trend == 'down' %}↓{% elif td.trend == 'flat' %}·{% endif -%}
+              </span>
+            {% else %}
+              <span class="muted small">—</span>
+            {% endif %}
+          </td>
+        {% endfor %}
+        <td>{{ t.active_goal_count }}</td>
+        <td>{{ t.open_action_count }}</td>
+        <td><a class="button-link" href="/teachers/{{ t.id }}">Open</a></td>
+      {% endif %}
     </tr>
     {% endfor %}
   </tbody>

@@ -544,7 +544,7 @@ def list_observations(conn: sqlite3.Connection, *, org_id: Optional[str] = None)
                       (SELECT MAX(version_number) FROM report_versions rv WHERE rv.observation_id = o.id) AS latest_version
                FROM observations o
                JOIN teachers t ON t.id = o.teacher_id
-               WHERE o.org_id = ?
+               WHERE o.org_id = ? AND o.deleted_at IS NULL
                ORDER BY o.scored_at DESC""",
             (org_id,),
         ).fetchall()
@@ -555,6 +555,7 @@ def list_observations(conn: sqlite3.Connection, *, org_id: Optional[str] = None)
                       (SELECT MAX(version_number) FROM report_versions rv WHERE rv.observation_id = o.id) AS latest_version
                FROM observations o
                JOIN teachers t ON t.id = o.teacher_id
+               WHERE o.deleted_at IS NULL
                ORDER BY o.scored_at DESC"""
         ).fetchall()
     return rows
@@ -1015,6 +1016,180 @@ def list_private_notes_for_teacher(
     return [dict(r) for r in rows]
 
 
+def delete_private_note(
+    conn: sqlite3.Connection, *, note_id: str, author_user_id: str
+) -> bool:
+    """Hard-delete a coach's private note. Author-only — the row is removed
+    ONLY if ``author_user_id`` matches the note's author. Returns True on
+    delete, False on no-op (note missing or author mismatch).
+
+    Coach private notes are the coach's own scratchpad — not a record — so
+    when the coach wants one gone, gone. Author guard is defense-in-depth
+    against a URL-forge in a future multi-coach world; today single-user auth
+    trivially satisfies it.
+    """
+    row = conn.execute(
+        "SELECT author_user_id FROM coach_private_notes WHERE id = ?", (note_id,)
+    ).fetchone()
+    if not row or row["author_user_id"] != author_user_id:
+        return False
+    conn.execute("DELETE FROM coach_private_notes WHERE id = ?", (note_id,))
+    conn.commit()
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Archive / restore — soft-delete flows.
+#
+# Teachers archive with a cascade: any open cycle closes with a canonical note,
+# any active/proposed goal transitions to `abandoned`, any in-flight lesson
+# plan flips to `archived`. Observations stay in place (they're history; the
+# aggregate queries filter `t.archived_at IS NULL` at the teacher level, so
+# the observations naturally drop out of dashboards along with the teacher).
+#
+# Observations archive using the existing `deleted_at` column — mis-uploads
+# happen (wrong teacher, bad video, uploaded twice), and every aggregate query
+# filters `o.deleted_at IS NULL` so an archived observation stops contributing
+# to rating rollups, cycle counts, and compliance stats. By-id lookups still
+# work so the coach can restore.
+#
+# Restore for teachers un-archives the teacher record but does NOT un-cascade —
+# a restored teacher starts fresh (coach opens a new cycle, proposes a new
+# goal). That matches how archive-then-restore reads in coaching contexts.
+# Restore for observations does un-do the delete: `deleted_at` clears and the
+# observation re-enters aggregates.
+# ---------------------------------------------------------------------------
+
+
+def archive_teacher(
+    conn: sqlite3.Connection, *, teacher_id: str
+) -> dict:
+    """Archive a teacher and cascade-close their in-flight work.
+
+    Cascade actions (all inside one transaction):
+      - `teachers.archived_at` = now
+      - Any open coaching cycle → closed with note "Auto-closed on teacher archive"
+      - Any `proposed` or `active` professional goal → status `abandoned`
+      - Any lesson plan in status `submitted` / `coach_reviewed` /
+        `revision_requested` → status `archived`
+
+    Returns a summary dict of what changed:
+      ``{"cycles_closed": int, "goals_abandoned": int, "plans_archived": int,
+         "already_archived": bool}``
+
+    Idempotent: archiving an already-archived teacher is a no-op (returns
+    ``already_archived: True`` with all counts zero).
+    """
+    row = conn.execute(
+        "SELECT archived_at FROM teachers WHERE id = ?", (teacher_id,)
+    ).fetchone()
+    if not row:
+        raise ValueError(f"Teacher {teacher_id!r} not found")
+    if row["archived_at"]:
+        return {
+            "cycles_closed": 0, "goals_abandoned": 0,
+            "plans_archived": 0, "already_archived": True,
+        }
+
+    now = _now_iso()
+
+    # Cycles — auto-close with a canonical note. Use close_cycle so the notes
+    # marker matches the format elsewhere and so growth_story is left alone.
+    open_cycles = conn.execute(
+        "SELECT id FROM coaching_cycles WHERE teacher_id = ? AND closed_at IS NULL",
+        (teacher_id,),
+    ).fetchall()
+    for c in open_cycles:
+        try:
+            close_cycle(
+                conn, c["id"],
+                closing_notes="Auto-closed on teacher archive",
+            )
+        except CycleAlreadyClosedError:
+            # Race with a concurrent close — fine, already handled.
+            pass
+
+    # Goals — abandon any proposed/active. Skip the transition guard by using
+    # close_goal with the abandoned outcome, which the guard accepts.
+    open_goals = conn.execute(
+        """SELECT id FROM professional_goals
+           WHERE teacher_id = ? AND status IN ('proposed', 'active')""",
+        (teacher_id,),
+    ).fetchall()
+    for g in open_goals:
+        close_goal(
+            conn, g["id"], "abandoned",
+            outcome_notes="Auto-abandoned on teacher archive",
+        )
+
+    # Lesson plans — flip in-flight statuses to archived. Approved plans stay
+    # approved (they're a record of what was taught); drafts stay drafts.
+    in_flight_plans = conn.execute(
+        """SELECT id FROM lesson_plans
+           WHERE teacher_id = ?
+             AND status IN ('submitted', 'coach_reviewed', 'revision_requested')""",
+        (teacher_id,),
+    ).fetchall()
+    for p in in_flight_plans:
+        update_lesson_plan_status(conn, p["id"], "archived")
+
+    # Finally, stamp the teacher.
+    conn.execute(
+        "UPDATE teachers SET archived_at = ? WHERE id = ?",
+        (now, teacher_id),
+    )
+    conn.commit()
+
+    return {
+        "cycles_closed": len(open_cycles),
+        "goals_abandoned": len(open_goals),
+        "plans_archived": len(in_flight_plans),
+        "already_archived": False,
+    }
+
+
+def restore_teacher(conn: sqlite3.Connection, *, teacher_id: str) -> None:
+    """Un-archive a teacher. Does NOT un-cascade: any cycles/goals/plans
+    closed on archive stay closed. A restored teacher starts fresh — coach
+    opens a new cycle, proposes a new goal.
+    """
+    conn.execute(
+        "UPDATE teachers SET archived_at = NULL WHERE id = ? AND archived_at IS NOT NULL",
+        (teacher_id,),
+    )
+    conn.commit()
+
+
+def archive_observation(conn: sqlite3.Connection, *, observation_id: str) -> None:
+    """Soft-delete an observation. Sets ``deleted_at`` so aggregate queries
+    stop counting it (rating rollups, cycle counts, compliance stats). The
+    row stays on disk; by-id lookups still work so the coach can restore.
+    Idempotent: a re-archive updates ``deleted_at`` (harmless — value is
+    only read for its truthiness).
+    """
+    row = conn.execute(
+        "SELECT id FROM observations WHERE id = ?", (observation_id,)
+    ).fetchone()
+    if not row:
+        raise ValueError(f"Observation {observation_id!r} not found")
+    conn.execute(
+        "UPDATE observations SET deleted_at = ? WHERE id = ?",
+        (_now_iso(), observation_id),
+    )
+    conn.commit()
+
+
+def restore_observation(conn: sqlite3.Connection, *, observation_id: str) -> None:
+    """Un-archive an observation: clears ``deleted_at`` so it re-enters
+    aggregates.
+    """
+    conn.execute(
+        "UPDATE observations SET deleted_at = NULL WHERE id = ?",
+        (observation_id,),
+    )
+    conn.commit()
+
+
 def record_bite_sized_action(
     conn: sqlite3.Connection,
     *,
@@ -1278,10 +1453,14 @@ def list_goals_in_cycle(conn: sqlite3.Connection, cycle_id: str) -> list:
 
 
 def list_observations_in_cycle(conn: sqlite3.Connection, cycle_id: str) -> list:
+    """List observations attached to a cycle. Archived observations are
+    filtered out — the cycle rollup treats them as never having happened,
+    matching every other aggregate.
+    """
     rows = conn.execute(
         """SELECT id, video_filename, video_duration_s, status, scored_at, uploaded_at
            FROM observations
-           WHERE coaching_cycle_id = ?
+           WHERE coaching_cycle_id = ? AND deleted_at IS NULL
            ORDER BY uploaded_at ASC""",
         (cycle_id,),
     ).fetchall()
@@ -1342,6 +1521,7 @@ def list_actions_available_for_assessment_at(
              AND bsat.implementation IS NULL
              AND src.uploaded_at < ?
              AND bsat.source_observation_id != ?
+             AND src.deleted_at IS NULL
            ORDER BY bsat.created_at ASC""",
         (obs["teacher_id"], obs["uploaded_at"], followup_observation_id),
     ).fetchall()
@@ -1607,6 +1787,7 @@ def rubric_score_movement_for_teacher(
            FROM observations o
            JOIN report_versions rv ON rv.observation_id = o.id
            WHERE o.teacher_id = ? AND o.status = 'complete'
+             AND o.deleted_at IS NULL
              AND rv.published_at IS NOT NULL
            ORDER BY o.scored_at ASC""",
         (teacher_id,),
@@ -1724,6 +1905,8 @@ def list_unacknowledged_hlm_responses(conn: sqlite3.Connection) -> list:
            JOIN teachers t ON t.id = o.teacher_id
            WHERE hr.acknowledged_at IS NULL
              AND hr.response_type IN ('adjust', 'talk')
+             AND o.deleted_at IS NULL
+             AND t.archived_at IS NULL
            ORDER BY hr.created_at ASC"""
     ).fetchall()
     return [dict(r) for r in rows]
@@ -1873,6 +2056,7 @@ def most_recent_published_move_for_teacher(
            FROM published_coach_moves pcm
            JOIN observations o ON o.id = pcm.observation_id
            WHERE o.teacher_id = ? AND pcm.superseded_at IS NULL
+             AND o.deleted_at IS NULL
            ORDER BY pcm.published_at DESC LIMIT 1""",
         (teacher_id,),
     ).fetchone()

@@ -18,6 +18,20 @@
 
 <p class="crumbs"><a href="/teachers">← Teachers</a></p>
 
+{% if teacher.archived_at %}
+<section class="card" style="background:#f8f5ec; border-color:#e6dfc9; margin-bottom: 16px;">
+  <div style="display:flex; justify-content: space-between; align-items:center; gap: 12px; flex-wrap: wrap;">
+    <div>
+      <strong>{{ teacher.name.split()[0] }} is archived.</strong>
+      <span class="muted small">Off your active caseload since {{ teacher.archived_at | warmdate }}. Historical records stay viewable; nothing new can be attached here.</span>
+    </div>
+    <form method="post" action="/teachers/{{ teacher.id }}/restore" style="margin: 0;">
+      <button type="submit" class="button-link">Restore to caseload</button>
+    </form>
+  </div>
+</section>
+{% endif %}
+
 {# ---- Hero card: avatar + name + one-line summary ---- #}
 <section class="teacher-hero">
   <span class="avatar avatar-lg avatar-{{ _avatar_class }}">
@@ -544,6 +558,39 @@
     </tbody>
   </table>
   {% endif %}
+
+  {% if archived_obs_count %}
+  <details style="margin-top: 16px;">
+    <summary class="muted small" style="cursor:pointer;">
+      Show {{ archived_obs_count }} archived observation{{ 's' if archived_obs_count != 1 }}
+    </summary>
+    <table class="obs-table small" style="margin-top: 8px;">
+      <thead>
+        <tr>
+          <th>Video</th>
+          <th>Watched</th>
+          <th>Archived on</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for o in archived_observations %}
+        <tr>
+          <td class="mono truncate">{{ o.video_filename }}</td>
+          <td class="muted small">{{ o.uploaded_at | warmdatetime }}</td>
+          <td class="muted small">{{ o.deleted_at | warmdatetime }}</td>
+          <td>
+            <a class="button-link secondary" href="/observations/{{ o.id }}">Open</a>
+            <form method="post" action="/observations/{{ o.id }}/restore" style="display:inline; margin-left: 4px;">
+              <button type="submit" class="button-link">Restore</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </details>
+  {% endif %}
 </section>
 
 {# ---- Rubric score history ---- #}
@@ -846,9 +893,18 @@
   <p class="muted small">{{ teacher.name.split()[0] }} doesn't see these, and neither do admins. This is your scratchpad.</p>
   {% if private_notes %}
     {% for n in private_notes %}
-    <div class="note">
+    <div class="note" style="position:relative;">
       <div class="muted small">{{ n.created_at | warmdatetime }}{% if n.observation_id %} · tied to an observation{% endif %}</div>
       <div>{{ n.body }}</div>
+      <form method="post"
+            action="/teachers/{{ teacher.id }}/private-notes/{{ n.id }}/delete"
+            onsubmit="return confirm('Delete this note? This can’t be undone.');"
+            style="position:absolute; top:6px; right:6px; margin:0;">
+        <input type="hidden" name="next" value="/teachers/{{ teacher.id }}#priv-notes">
+        <button type="submit" class="button-link secondary"
+                title="Delete this note"
+                style="padding: 2px 8px; font-size: 12px;">✕</button>
+      </form>
     </div>
     {% endfor %}
   {% else %}
@@ -869,6 +925,40 @@
 </section>
   </div>
 </details>
+
+{% if not teacher.archived_at %}
+{# ---- Archive teacher (out-of-caseload move) ---- #}
+{% set _open_cycles = active_cycles|length %}
+{% set _open_goals = active_goals|length %}
+<section class="card" style="margin-top: 24px; background: #fafafa;">
+  <details>
+    <summary class="muted small" style="cursor: pointer;">
+      Archive {{ teacher.name.split()[0] }} (off your active caseload)
+    </summary>
+    <div style="margin-top: 12px;">
+      <p class="muted small">
+        Moves {{ teacher.name.split()[0] }} off your active caseload. Their history stays viewable, and you can restore them later
+        — restore brings them back to the roster, but any in-flight cycle or goal that was open on archive stays closed.
+      </p>
+      {% if _open_cycles or _open_goals %}
+      <p class="muted small">
+        On archive, we'll also close
+        {% if _open_cycles %}{{ _open_cycles }} open cycle{{ 's' if _open_cycles != 1 }}{% if _open_goals %}
+          and {% endif %}{% endif %}
+        {% if _open_goals %}{{ _open_goals }} goal{{ 's' if _open_goals != 1 }} (marked "set aside"){% endif %}.
+      </p>
+      {% endif %}
+      <form method="post" action="/teachers/{{ teacher.id }}/archive"
+            onsubmit="return confirm('Archive this teacher? Historical records stay viewable, and you can restore later.');"
+            style="margin: 0;">
+        <button type="submit" class="button-link secondary">
+          Archive {{ teacher.name.split()[0] }}
+        </button>
+      </form>
+    </div>
+  </details>
+</section>
+{% endif %}
 
 <script>
   // Auto-open the deep-dive section pointed to by the URL hash.
