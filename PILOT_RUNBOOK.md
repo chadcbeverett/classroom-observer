@@ -111,17 +111,19 @@ On first boot, the app:
 3. Runs the stuck-job sweep (reclaims any observation left mid-pipeline by a prior crash — see §12).
 4. Starts the SMTP sender thread if `SMTP_HOST` is set.
 
-Watch the log. You should see:
+Watch the log. You should see, in order (SMTP + worker lines come from the startup hook and may print before or after uvicorn's own banner):
 
 ```
 INFO:     Uvicorn running on http://127.0.0.1:8000
 INFO:     SMTP sender started (host=… port=… from=…)
+INFO:     Job worker started (db=…/observations.sqlite, poll=2.0s)
 ```
 
 Or, if `SMTP_HOST` isn't set:
 
 ```
 INFO:     SMTP not configured (SMTP_HOST unset) — outbound_mail stays queued; use /dev/mail in dev.
+INFO:     Job worker started (db=…/observations.sqlite, poll=2.0s)
 ```
 
 If you see the second line and this is a production deploy, go back to §3.
@@ -289,18 +291,25 @@ Rows here should be zero — the sweep runs at every restart. A row that keeps s
 
 ### Backing up the DB
 
-SQLite is a single file. Copy it while the app is quiesced (no in-flight writes):
+SQLite is a single file. Two approaches — pick one and put it on a cron.
+
+**Hot backup (recommended for a live pilot — no downtime).** SQLite's own
+`.backup` command takes a consistent snapshot while the app keeps writing.
+It uses the SQLite backup API under the hood, so concurrent uvicorn writes
+are safe:
+
+```bash
+# Runs against a live app; no restart required.
+sqlite3 reports/observations.sqlite ".backup reports/backups/observations-$(date +%Y%m%d-%H%M%S).sqlite"
+```
+
+**Quiesced copy (older / more paranoid).** Stops the app, plain `cp`, restarts.
+Guarantees no in-flight writes but interrupts service:
 
 ```bash
 systemctl stop classroom-observer  # or your equivalent
 cp reports/observations.sqlite reports/backups/observations-$(date +%Y%m%d-%H%M%S).sqlite
 systemctl start classroom-observer
-```
-
-Or use `.backup` for a hot backup that doesn't require quiescing:
-
-```bash
-sqlite3 reports/observations.sqlite ".backup reports/backups/observations-$(date +%Y%m%d-%H%M%S).sqlite"
 ```
 
 The uploads directory (`app/uploads/`) is separate — back it up on the same cadence. Each observation's video + frames live under `app/uploads/<observation_id>/`.
