@@ -12,10 +12,18 @@ JSON schema also gets rubric-specific enum constraints injected at scoring time
 """
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import List, Literal, Optional
 from pydantic import BaseModel, Field, field_validator
 
 from .rubric import Rubric
+
+
+# Implementation values. Kept in sync with:
+#   - schema.sql: bite_sized_action_tracking.implementation CHECK constraint
+#   - main.py:   assess_bite_sized_action allowed values
+# A drift in either direction crashes _persist_report on the CHECK constraint
+# and throws away the whole scored report (agent's finding #2).
+IMPLEMENTATION_VALUES = ("not_observed", "partial", "full", "regressed")
 
 
 class EvidenceItem(BaseModel):
@@ -169,8 +177,11 @@ class PriorActionAssessment(BaseModel):
     core_teacher_skill: str = Field(
         description="Snapshot of the skill name (copy from the tracking record for readability)."
     )
-    implementation: str = Field(
-        description="One of: full / partial / not_observed / regressed."
+    implementation: Literal["not_observed", "partial", "full", "regressed"] = Field(
+        description="Exactly one of: full / partial / not_observed / regressed. "
+        "Values with spaces, alternate phrasings, or unknown strings are rejected "
+        "at parse time — the storage CHECK constraint would otherwise abort the "
+        "entire report persist AFTER the billed AI call."
     )
     evidence_notes: str = Field(
         description="2-3 sentences of specific evidence from THIS observation supporting the "

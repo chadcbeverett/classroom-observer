@@ -1596,6 +1596,7 @@ def record_bite_sized_action(
     related_domain: str,
     bite_sized_action_text: str,
     goal_id: Optional[str] = None,
+    commit: bool = True,
 ) -> str:
     """Snapshot a coaching recommendation into the tracking table so it can be
     assessed at the next observation. Called at the moment a scoring job completes.
@@ -1603,6 +1604,11 @@ def record_bite_sized_action(
     ``goal_id`` is the professional-goal this action is meant to advance. If not
     provided, we auto-match by ``related_domain`` against active goals for this
     teacher — coach can override in the UI.
+
+    ``commit=False`` lets the caller compose atomic transactions across
+    several writes — used by the persist path in app/jobs.py so a mid-persist
+    crash doesn't leave the observation marked complete with a phantom
+    tracking row but no report.
     """
     if goal_id is None:
         # Auto-link to an active goal on the same domain — but ONLY when the
@@ -1638,7 +1644,8 @@ def record_bite_sized_action(
             _now_iso(),
         ),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return tracking_id
 
 
@@ -1671,11 +1678,21 @@ def assess_bite_sized_action(
 def list_open_action_tracking_for_teacher(
     conn: sqlite3.Connection, teacher_id: str
 ) -> list:
-    """Actions issued to this teacher that haven't been assessed yet."""
+    """Actions issued to this teacher that haven't been assessed yet.
+
+    Filters out actions whose source observation was archived — those actions
+    came from a mis-uploaded or invalidated observation and should not
+    continue to appear as "awaiting assessment" in coach dashboards or, more
+    importantly, in the AI's context on the next observation (where the
+    prompt asks the model to score them and could produce contradictory
+    ratings for phantom actions).
+    """
     rows = conn.execute(
-        """SELECT * FROM bite_sized_action_tracking
-           WHERE teacher_id = ? AND implementation IS NULL
-           ORDER BY created_at DESC""",
+        """SELECT bsat.* FROM bite_sized_action_tracking bsat
+           JOIN observations src ON src.id = bsat.source_observation_id
+           WHERE bsat.teacher_id = ? AND bsat.implementation IS NULL
+             AND src.deleted_at IS NULL
+           ORDER BY bsat.created_at DESC""",
         (teacher_id,),
     ).fetchall()
     return [dict(r) for r in rows]

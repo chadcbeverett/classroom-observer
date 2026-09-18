@@ -399,6 +399,18 @@ def score_observation(
     schema = _sanitize_schema(ObservationReport.model_json_schema(), rubric)
 
     # Attempt 1: default effort.
+    #
+    # Three failure modes justify the escalation retry:
+    #   (a) ValidationError: model produced JSON whose shape violates the
+    #       Pydantic schema (missing/short fields — the Lopez failure).
+    #   (b) ValueError: rubric-name mismatch flagged by validate_against_rubric.
+    #   (c) RuntimeError with "stop_reason='max_tokens'": the API halted the
+    #       model mid-response because it exhausted the token budget. The
+    #       response body is partial JSON; a doubled max_tokens on retry lets
+    #       the model finish. This is the SAME "Lopez failure mode" the retry
+    #       comment cites — the earlier except tuple omitted RuntimeError, so
+    #       every truncation immediately marked the observation failed instead
+    #       of triggering the escalation the retry was written for.
     try:
         return _run_scoring_call(
             client=client,
@@ -410,14 +422,22 @@ def score_observation(
             effort="high",
             attempt_label="attempt1_high",
         )
-    except (ValidationError, ValueError) as e:
-        # Model produced a schema-invalid or rubric-invalid response (usually because
-        # it bailed partway). Escalate.
+    except (ValidationError, ValueError, RuntimeError) as e:
+        # Only retry on the RuntimeError variants that a bigger budget can
+        # actually fix — max_tokens truncation and empty-content stalls.
+        # A RuntimeError from a network/auth failure or a permanent server
+        # error re-raises so the caller sees the real cause and doesn't
+        # burn a second billed call for no reason.
+        if isinstance(e, RuntimeError):
+            msg = str(e).lower()
+            recoverable = "stop_reason='max_tokens'" in msg or "no text content" in msg
+            if not recoverable:
+                raise
         err_summary = (
             f"{e.error_count()} pydantic error(s)" if isinstance(e, ValidationError)
             else str(e).split("\n")[0]
         )
-        print(f"  Attempt 1 failed validation: {err_summary}. "
+        print(f"  Attempt 1 failed: {err_summary}. "
               f"Retrying with effort=xhigh, max_tokens={max_tokens * 2}...")
 
     # Attempt 2: xhigh effort, doubled max_tokens.

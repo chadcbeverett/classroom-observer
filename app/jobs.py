@@ -44,6 +44,55 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+# Watchdog: reclaim observations left in an in-flight status by a crashed
+# worker or a killed process. Called at app startup (see app.main).
+#
+# Because the executor is in-process and stateless across restarts, any job
+# alive at the moment uvicorn was signaled is gone forever — but the DB
+# row still says 'transcribing' or 'scoring', spinning forever in every
+# in-flight aggregate and blocking the coach from re-uploading. This sweep
+# marks such rows 'failed' with a clear reason so the coach can retry.
+#
+# Threshold is generous (30 min) because Whisper on a full-lesson video can
+# legitimately take that long. Adjust if the pipeline gets faster.
+STUCK_JOB_MINUTES = 30
+
+
+def sweep_stuck_jobs(db_path: Path) -> int:
+    """Mark observations stuck in transcribing/scoring older than the
+    threshold as failed. Returns the number reclaimed. Safe to call at
+    every startup — idempotent when nothing is stuck.
+    """
+    from datetime import timedelta
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=STUCK_JOB_MINUTES)).isoformat()
+    conn = db_connect(db_path)
+    try:
+        # `uploaded_at` is the closest to "when did the pipeline start" — the
+        # status column has no timestamp of its last transition, so we use
+        # uploaded_at as a coarse lower bound. A newly-uploaded obs won't
+        # trip the sweep even if it lands in transcribing immediately.
+        rows = conn.execute(
+            """SELECT id FROM observations
+               WHERE status IN ('transcribing', 'scoring')
+                 AND uploaded_at < ?""",
+            (cutoff,),
+        ).fetchall()
+        for row in rows:
+            conn.execute(
+                """UPDATE observations
+                   SET status = 'failed',
+                       failure_reason = ?
+                   WHERE id = ?""",
+                (f"Job did not finish within {STUCK_JOB_MINUTES} minutes — "
+                 f"likely a worker crash or app restart. Re-upload to try again.",
+                 row["id"]),
+            )
+        conn.commit()
+        return len(rows)
+    finally:
+        conn.close()
+
+
 def _set_status(db_path: Path, observation_id: str, status: str,
                 failure_reason: Optional[str] = None) -> None:
     conn = db_connect(db_path)
@@ -183,46 +232,71 @@ def _persist_report(
     import uuid
     conn = db_connect(db_path)
     try:
-        # Update observation with pipeline metadata.
-        conn.execute(
-            """UPDATE observations SET
-                   status = 'complete',
-                   video_duration_s = ?,
-                   frame_count = ?,
-                   frame_interval_s = ?,
-                   transcript_model = ?,
-                   scored_at = ?,
-                   failure_reason = NULL
-               WHERE id = ?""",
-            (duration_s, frame_count, frame_interval_s,
-             transcription_model, _now_iso(), observation_id),
-        )
+        # Look up the observation's teacher + org FIRST — every scoped write
+        # below needs them, and the tracking updates are the entry point for
+        # a cross-teacher poisoning bug when the AI hallucinates a tracking_id.
         obs_row = conn.execute(
             "SELECT teacher_id, org_id FROM observations WHERE id = ?",
             (observation_id,),
         ).fetchone()
+        if not obs_row:
+            raise RuntimeError(f"Observation {observation_id!r} disappeared during persist")
 
-        # Persist prior-action assessments (mark the tracking rows as followed-up).
+        # All writes below run in ONE transaction — we do NOT commit between
+        # them and we do NOT call record_bite_sized_action's default committing
+        # path. If anything after this point raises, sqlite discards every
+        # partial write and the observation stays in whatever pre-persist state
+        # the caller had set (typically 'scoring'), so the outer handler in
+        # _run_job can mark it 'failed' cleanly.
+        #
+        # Prior ordering committed 'observations.status=complete' + tracking
+        # snapshots via record_bite_sized_action's internal commit BEFORE the
+        # report_versions INSERT — a mid-persist crash left the observation
+        # marked complete with no report row, and phantom tracking rows for
+        # a report that never landed. Now: everything or nothing.
+
+        # 1. Prior-action assessments — mark the tracking rows as followed-up.
+        # The tracking_id from the AI is UNTRUSTED input: hallucinated or
+        # cross-teacher ids would silently update another teacher's action.
+        # Scope every UPDATE to (id AND teacher_id) and confirm rowcount==1;
+        # skip anything else and log it so the coach can see the drift.
+        _now = _now_iso()
+        _persisted_pa: list = []
+        _skipped_pa: list = []
         for pa in getattr(report, "prior_action_assessments", []) or []:
-            conn.execute(
+            cur = conn.execute(
                 """UPDATE bite_sized_action_tracking SET
                        followup_observation_id = ?,
                        implementation = ?,
                        evidence_notes = ?,
                        assessed_by_user_id = NULL,
                        assessed_at = ?
-                   WHERE id = ?""",
+                   WHERE id = ? AND teacher_id = ?""",
                 (
                     observation_id,
                     pa.implementation,
                     pa.evidence_notes,
-                    _now_iso(),
+                    _now,
                     pa.tracking_id,
+                    obs_row["teacher_id"],
                 ),
             )
+            if cur.rowcount == 1:
+                _persisted_pa.append(pa)
+            else:
+                # AI referenced an action that isn't on this teacher's ledger
+                # (hallucinated UUID, cross-teacher collision, or an action
+                # already reassigned). Do NOT let it land: the JSON payload
+                # below would otherwise show the coach a rating for an
+                # action that doesn't exist on this teacher.
+                _skipped_pa.append({
+                    "tracking_id": pa.tracking_id,
+                    "reason": "not-on-teacher-or-missing",
+                })
 
-        # Snapshot new bite-sized actions into tracking so the NEXT observation
-        # can be assessed against them.
+        # 2. Snapshot new bite-sized actions into tracking so the NEXT
+        # observation can be assessed against them. commit=False so the
+        # tracking rows live or die with the report.
         for rec in report.coaching_recommendations:
             record_bite_sized_action(
                 conn,
@@ -232,40 +306,34 @@ def _persist_report(
                 core_teacher_skill=rec.core_teacher_skill,
                 related_domain=rec.related_domain,
                 bite_sized_action_text=rec.bite_sized_action,
+                commit=False,
             )
 
-        # Compute next version_number (starts at 1).
+        # 3. Compute next version_number (starts at 1).
         row = conn.execute(
             "SELECT COALESCE(MAX(version_number), 0) AS m FROM report_versions WHERE observation_id = ?",
             (observation_id,),
         ).fetchone()
         next_ver = row["m"] + 1
 
-        # Unpublish any prior versions — the uq_rv_one_published partial unique
-        # index enforces at most one published version per observation.
+        # 4. Unpublish any prior versions — uq_rv_one_published partial index
+        # enforces at most one published version per observation.
         conn.execute(
             "UPDATE report_versions SET published_at = NULL WHERE observation_id = ?",
             (observation_id,),
         )
 
-        # We serialize the entire report (including highest_leverage_move) into
-        # the report_versions row. The dedicated column for coaching_recs stays
-        # populated for backwards compatibility; the newer fields go into an
-        # extra column the reader can pick up.
-        # SQLite: schema doesn't have a column for these new fields, so we
-        # stash them inside the coaching_recommendations JSON envelope as a
-        # {"recommendations": [...], "highest_leverage_move": {...}} wrapper.
-        # Backwards-compatible reader: if the JSON parses as a list, treat as
-        # legacy; if it parses as a dict with 'recommendations', unwrap.
+        # 5. Write the report row. Only the prior-action assessments we
+        # actually persisted end up in the JSON envelope — dropping the
+        # hallucinated ones so the reader can trust every id in the wrapper
+        # points at a real tracking row.
         coaching_wrapper = {
             "recommendations": [cr.model_dump() for cr in report.coaching_recommendations],
             "highest_leverage_move": (
                 report.highest_leverage_move.model_dump()
                 if report.highest_leverage_move else None
             ),
-            "prior_action_assessments": [
-                pa.model_dump() for pa in getattr(report, "prior_action_assessments", []) or []
-            ],
+            "prior_action_assessments": [pa.model_dump() for pa in _persisted_pa],
         }
 
         conn.execute(
@@ -284,10 +352,43 @@ def _persist_report(
                 json.dumps([da.model_dump() for da in report.domain_assessments]),
                 json.dumps(coaching_wrapper),
                 None,
-                _now_iso(),
-                _now_iso(),
+                _now,
+                _now,
             ),
         )
+
+        # 6. Flip the observation to complete LAST — after every payload has
+        # been written but before the commit. If any of the above raised,
+        # the observation stays in 'scoring' and the outer handler marks it
+        # 'failed'. When we reach here, the whole thing lands together.
+        conn.execute(
+            """UPDATE observations SET
+                   status = 'complete',
+                   video_duration_s = ?,
+                   frame_count = ?,
+                   frame_interval_s = ?,
+                   transcript_model = ?,
+                   scored_at = ?,
+                   failure_reason = NULL
+               WHERE id = ?""",
+            (duration_s, frame_count, frame_interval_s,
+             transcription_model, _now, observation_id),
+        )
         conn.commit()
+
+        if _skipped_pa:
+            # Not a failure — the report landed, but flag the drift for a
+            # future audit that watches for AI id-hallucination trends.
+            print(f"[jobs] {observation_id[:8]}: skipped {len(_skipped_pa)} "
+                  f"prior-action assessment(s) with unknown/cross-teacher ids: {_skipped_pa}")
+    except Exception:
+        # Roll back any pending writes so the observation state stays whatever
+        # the caller had. sqlite auto-rolls-back on next commit-or-close, but
+        # explicit is friendlier for a shared connection in future refactors.
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
     finally:
         conn.close()

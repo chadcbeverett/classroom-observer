@@ -127,6 +127,18 @@ def _bootstrap() -> None:
     _SEEDED_IDS.update({"org_id": org_id, "user_id": user_id, "rubric_id": rubric_id})
     conn.close()
 
+    # Reclaim observations left in an in-flight status by a crashed worker
+    # or a killed process. Without this, an interrupted job leaves the row
+    # in 'transcribing'/'scoring' forever and blocks the coach from re-
+    # uploading. See jobs.sweep_stuck_jobs for the threshold rationale.
+    from app.jobs import sweep_stuck_jobs
+    reclaimed = sweep_stuck_jobs(DB_PATH)
+    if reclaimed:
+        import logging
+        logging.getLogger("uvicorn.error").info(
+            "Startup watchdog: reclaimed %d stuck observation(s).", reclaimed,
+        )
+
 
 # ---------------------------------------------------------------------------
 # Helpers
