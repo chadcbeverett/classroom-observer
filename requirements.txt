@@ -1,3 +1,15 @@
 anthropic>=0.88.0
 faster-whisper>=1.0.3
 pydantic>=2.7.0
+
+# Web stack
+fastapi>=0.115
+uvicorn>=0.35
+jinja2>=3.1
+python-multipart>=0.0.20
+
+# Markdown → HTML with bleach sanitization on top for AI-produced reports
+# (see _sanitize_report_html in app/main.py — the AI can be prompt-injected
+# to output raw HTML, so bleach whitelists only markdown-shaped tags).
+markdown>=3.9
+bleach>=6.0

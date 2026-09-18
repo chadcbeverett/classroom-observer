@@ -24,6 +24,54 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import markdown as md_lib
+import bleach as _bleach
+
+# Whitelist for the AI-produced report HTML. python-markdown passes raw HTML
+# tags through untouched, so a lesson-plan PDF whose extracted text contains
+# `<script>` (or a teacher whose CSV-imported name contains `<img src=x
+# onerror=...>`) would otherwise land script content inside `report_html`,
+# which the template pipes to the browser via `|safe`. Every tag markdown
+# legitimately produces is on this list; every tag it doesn't is stripped.
+# Attribute whitelist is deliberately narrow — href/title on links only,
+# nothing that carries JS or CSS payload capability.
+_REPORT_ALLOWED_TAGS = frozenset({
+    "p", "br", "hr", "strong", "em", "u", "s", "code", "pre", "blockquote",
+    "ul", "ol", "li",
+    "h1", "h2", "h3", "h4", "h5", "h6",
+    "a",
+    "table", "thead", "tbody", "tr", "th", "td",
+    "span", "div",  # markdown-extra wraps some blocks in these
+})
+_REPORT_ALLOWED_ATTRS = {
+    "a": ["href", "title", "rel"],
+    "th": ["align"],
+    "td": ["align"],
+}
+_REPORT_ALLOWED_PROTOCOLS = frozenset({"http", "https", "mailto"})
+
+
+def _sanitize_report_html(raw_html: str) -> str:
+    """Strip any tag or attribute a legitimate markdown render wouldn't
+    produce, then re-close any tags the sanitizer left dangling.
+
+    Called on the AI-rendered report before it lands in the template context
+    for `|safe` rendering. Defense against two vectors:
+      (a) AI prompt-injection: a document uploaded to the coach's caseload
+          instructs the AI to embed `<script>` / `<img onerror>` in
+          overall_summary; without this the payload persists in the report
+          row and fires on every open by coach / principal / district.
+      (b) Roster-name injection: a teacher CSV-imported with an HTML tag
+          in `name` gets stitched into the markdown H1 by
+          `_compose_report_markdown` — the tag would render otherwise.
+    """
+    return _bleach.clean(
+        raw_html,
+        tags=_REPORT_ALLOWED_TAGS,
+        attributes=_REPORT_ALLOWED_ATTRS,
+        protocols=_REPORT_ALLOWED_PROTOCOLS,
+        strip=True,           # remove disallowed tags instead of escaping them
+        strip_comments=True,  # HTML comments could carry conditional-comment IE-era payloads
+    )
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -1457,9 +1505,18 @@ def observation_detail(request: Request, observation_id: str) -> HTMLResponse:
             highest_leverage_move=highest_leverage_move,
             prior_action_assessments=prior_action_assessments,
         )
-        report_html = md_lib.markdown(
-            markdown_source,
-            extensions=["extra", "sane_lists"],
+        # Render markdown → HTML, then sanitize through bleach before the
+        # template's `|safe` unlocks it. python-markdown passes raw HTML
+        # tags through untouched; without _sanitize_report_html a lesson-
+        # plan PDF whose extracted text prompt-injects a `<script>` payload
+        # into the AI's overall_summary would fire on every open of this
+        # observation. (Same story for a teacher whose CSV `name` contained
+        # an HTML tag — it lands in the report's H1.)
+        report_html = _sanitize_report_html(
+            md_lib.markdown(
+                markdown_source,
+                extensions=["extra", "sane_lists"],
+            )
         )
 
     # Bite-sized action tracking — three buckets:
