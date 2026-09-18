@@ -187,6 +187,24 @@ def _bootstrap() -> None:
             "Startup watchdog: reclaimed %d stuck observation(s).", reclaimed,
         )
 
+    # Kick off the SMTP sender if the env is configured. When SMTP_HOST is
+    # unset the module returns None and outbound_mail stays queued for the
+    # /dev/mail viewer — the local-dev flow. In production the sender is a
+    # background thread that drains the queue every ~10 sec; a stuck send
+    # marks the row failed_at + failure_reason instead of blocking /signin.
+    from app.smtp_sender import start_if_configured as _start_smtp
+    _start_smtp(DB_PATH)
+
+
+@app.on_event("shutdown")
+def _shutdown_smtp_sender() -> None:
+    """Give the SMTP thread a chance to finish an in-flight send + close
+    its connection cleanly before the process exits. Bounded wait — a
+    stuck send won't hold up shutdown past a few seconds.
+    """
+    from app.smtp_sender import stop_if_running
+    stop_if_running()
+
 
 # ---------------------------------------------------------------------------
 # Helpers
