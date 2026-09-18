@@ -494,6 +494,133 @@ def _guard_teacher_write(request: Request, teacher_id: str, action: str = "Write
     return viewer
 
 
+# ---------------------------------------------------------------------------
+# Entity-scoped guards — resolve the entity's teacher_id and defer to
+# _require_teacher_access. Cross-caseload URL-forges (a second coach
+# hitting the first coach's obs/cycle/goal/action/plan via the id in the
+# URL) get 403; unknown ids get 404 so the id space stays opaque.
+# ---------------------------------------------------------------------------
+
+
+def _resolve_obs_teacher(conn, observation_id: str) -> str:
+    row = conn.execute(
+        "SELECT teacher_id FROM observations WHERE id = ?", (observation_id,)
+    ).fetchone()
+    if not row:
+        raise HTTPException(404, "Observation not found")
+    return row["teacher_id"]
+
+
+def _resolve_cycle_teacher(conn, cycle_id: str) -> str:
+    row = conn.execute(
+        "SELECT teacher_id FROM coaching_cycles WHERE id = ?", (cycle_id,)
+    ).fetchone()
+    if not row:
+        raise HTTPException(404, "Cycle not found")
+    return row["teacher_id"]
+
+
+def _resolve_goal_teacher(conn, goal_id: str) -> str:
+    row = conn.execute(
+        "SELECT teacher_id FROM professional_goals WHERE id = ?", (goal_id,)
+    ).fetchone()
+    if not row:
+        raise HTTPException(404, "Goal not found")
+    return row["teacher_id"]
+
+
+def _resolve_action_teacher(conn, action_id: str) -> str:
+    row = conn.execute(
+        "SELECT teacher_id FROM bite_sized_action_tracking WHERE id = ?", (action_id,)
+    ).fetchone()
+    if not row:
+        raise HTTPException(404, "Action not found")
+    return row["teacher_id"]
+
+
+def _resolve_plan_teacher(conn, plan_id: str) -> str:
+    row = conn.execute(
+        "SELECT teacher_id FROM lesson_plans WHERE id = ?", (plan_id,)
+    ).fetchone()
+    if not row:
+        raise HTTPException(404, "Lesson plan not found")
+    return row["teacher_id"]
+
+
+def _guard_obs_write(request: Request, observation_id: str, action: str = "Write") -> dict:
+    viewer = _current_viewer(request)
+    if viewer.get("role") == "anon":
+        raise HTTPException(401, f"{action} needs a sign-in")
+    conn = db_connect(DB_PATH)
+    try:
+        tid = _resolve_obs_teacher(conn, observation_id)
+    finally:
+        conn.close()
+    _require_teacher_access(viewer, tid, action)
+    return viewer
+
+
+def _guard_cycle_write(request: Request, cycle_id: str, action: str = "Write") -> dict:
+    viewer = _current_viewer(request)
+    if viewer.get("role") == "anon":
+        raise HTTPException(401, f"{action} needs a sign-in")
+    conn = db_connect(DB_PATH)
+    try:
+        tid = _resolve_cycle_teacher(conn, cycle_id)
+    finally:
+        conn.close()
+    _require_teacher_access(viewer, tid, action)
+    return viewer
+
+
+def _guard_goal_write(request: Request, goal_id: str, action: str = "Write") -> dict:
+    viewer = _current_viewer(request)
+    if viewer.get("role") == "anon":
+        raise HTTPException(401, f"{action} needs a sign-in")
+    conn = db_connect(DB_PATH)
+    try:
+        tid = _resolve_goal_teacher(conn, goal_id)
+    finally:
+        conn.close()
+    _require_teacher_access(viewer, tid, action)
+    return viewer
+
+
+def _guard_action_write(request: Request, action_id: str, action: str = "Write") -> dict:
+    viewer = _current_viewer(request)
+    if viewer.get("role") == "anon":
+        raise HTTPException(401, f"{action} needs a sign-in")
+    conn = db_connect(DB_PATH)
+    try:
+        tid = _resolve_action_teacher(conn, action_id)
+    finally:
+        conn.close()
+    _require_teacher_access(viewer, tid, action)
+    return viewer
+
+
+def _guard_plan_write(request: Request, plan_id: str, action: str = "Write") -> dict:
+    viewer = _current_viewer(request)
+    if viewer.get("role") == "anon":
+        raise HTTPException(401, f"{action} needs a sign-in")
+    conn = db_connect(DB_PATH)
+    try:
+        tid = _resolve_plan_teacher(conn, plan_id)
+    finally:
+        conn.close()
+    _require_teacher_access(viewer, tid, action)
+    return viewer
+
+
+def _viewer_uid(viewer: dict) -> str:
+    """Author-of-record for a write path. Prefers the current viewer's user_id
+    (real session), falls back to the seeded id (script paths, tests). In
+    multi-coach production every route reaches this via a signed session, so
+    the viewer wins.
+    """
+    return viewer.get("user_id") or _SEEDED_IDS.get("user_id")
+
+
 def _scope_filter(viewer: dict, *, teachers_alias: str = "t") -> tuple[str, list]:
     """Return a SQL fragment + params that scopes a query to teachers the
     viewer may see. Meant to be spliced into aggregate queries whose FROM
@@ -1095,13 +1222,31 @@ async def upload_observation(
             f.write(chunk)
 
     # Create the DB row (status = pending).
+    viewer = _current_viewer(request)
+    _coach_uid = _viewer_uid(viewer)
+    _org_id = viewer.get("org_id") or _SEEDED_IDS["org_id"]
     conn = db_connect(DB_PATH)
     try:
         from pipeline.db import ArchivedTeacherError
+        # Cross-coach conflict: if the teacher-name already resolves to a
+        # teacher assigned to a DIFFERENT coach in this org, refuse rather
+        # than silently attaching an observation to another coach's teacher.
+        # (The coach can rename their upload's teacher_name to disambiguate.)
+        existing = conn.execute(
+            """SELECT id, assigned_coach_user_id FROM teachers
+               WHERE org_id = ? AND name = ? AND archived_at IS NULL""",
+            (_org_id, teacher_name.strip()),
+        ).fetchone()
+        if existing and existing["assigned_coach_user_id"] and existing["assigned_coach_user_id"] != _coach_uid:
+            raise HTTPException(
+                409,
+                f"A teacher named {teacher_name.strip()!r} is already on another coach's caseload. "
+                f"Ask them to hand the record off, or upload under a distinguishable name."
+            )
         try:
             teacher_id = get_or_create_teacher(
-                conn, org_id=_SEEDED_IDS["org_id"], name=teacher_name.strip(),
-                coach_user_id=_SEEDED_IDS["user_id"],
+                conn, org_id=_org_id, name=teacher_name.strip(),
+                coach_user_id=_coach_uid,
             )
         except ArchivedTeacherError as e:
             raise HTTPException(400, str(e))
@@ -1173,7 +1318,7 @@ async def upload_observation(
                     video_ref, video_filename, video_duration_s,
                     status, uploaded_at, observed_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'pending', ?, ?)""",
-            (obs_id, _SEEDED_IDS["org_id"], teacher_id, _SEEDED_IDS["user_id"], rubric_db_id,
+            (obs_id, _org_id, teacher_id, _coach_uid, rubric_db_id,
              auto_cycle_id, (lesson_plan_id or None),
              str(dest_path), safe_name, _now_iso_ts, _obs_at),
         )
@@ -1418,8 +1563,7 @@ async def create_lesson_plan_route(
     document: UploadFile = File(...),
 ) -> RedirectResponse:
     # Teacher submits their own plans; coach can upload on their behalf.
-    if not _viewer_can_edit_teacher(_current_viewer(request), teacher_id):
-        raise HTTPException(403, "Not your teacher")
+    viewer = _guard_teacher_write(request, teacher_id, "Lesson plan upload")
     import uuid as _uuid
     plan_id = str(_uuid.uuid4())
     dest_dir = LESSON_PLANS_DIR / plan_id / "v1"
@@ -1435,12 +1579,12 @@ async def create_lesson_plan_route(
     try:
         real_id = create_lesson_plan(
             conn,
-            org_id=_SEEDED_IDS["org_id"],
+            org_id=viewer.get("org_id") or _SEEDED_IDS["org_id"],
             teacher_id=teacher_id,
             title=title.strip(),
             plan_start_date=plan_start_date or None,
             plan_end_date=plan_end_date or None,
-            created_by_user_id=_SEEDED_IDS["user_id"],
+            created_by_user_id=_viewer_uid(viewer),
             file_ref=str(dest_path),
             original_filename=document.filename or "plan.pdf",
             extracted_text=extracted,
@@ -1483,13 +1627,12 @@ async def upload_lesson_plan_version(
     document: UploadFile = File(...),
 ) -> RedirectResponse:
     """Upload a revised version of an existing plan. Owner or coach only."""
+    viewer = _guard_plan_write(request, plan_id, "Lesson plan revision")
     conn = db_connect(DB_PATH)
     try:
         plan = get_lesson_plan(conn, plan_id)
         if not plan:
             raise HTTPException(404)
-        if not _viewer_can_edit_teacher(_current_viewer(request), plan.get("teacher_id")):
-            raise HTTPException(403, "Not authorized to revise this plan")
         next_ver = plan["current_version"] + 1
     finally:
         conn.close()
@@ -1509,7 +1652,7 @@ async def upload_lesson_plan_version(
             lesson_plan_id=plan_id,
             file_ref=str(dest_path),
             original_filename=document.filename or "plan.pdf",
-            uploaded_by_user_id=_SEEDED_IDS["user_id"],
+            uploaded_by_user_id=_viewer_uid(viewer),
             extracted_text=extracted,
         )
     finally:
@@ -1531,21 +1674,19 @@ def post_lesson_plan_comment(
     """
     if not body.strip():
         raise HTTPException(400, "Comment body required")
+    viewer = _guard_plan_write(request, plan_id, "Lesson plan comment")
     conn = db_connect(DB_PATH)
     try:
         plan = get_lesson_plan(conn, plan_id)
         if not plan:
             raise HTTPException(404)
-        viewer = _current_viewer(request)
-        if not _viewer_can_edit_teacher(viewer, plan.get("teacher_id")):
-            raise HTTPException(403, "Not authorized to comment on this plan")
         # Derive author_role from the viewer; ignore any form-supplied value.
         author_role = "teacher" if viewer["role"] == "teacher" else "coach"
         add_lesson_plan_comment(
             conn,
             lesson_plan_id=plan_id,
             plan_version_number=plan_version_number,
-            author_user_id=_SEEDED_IDS["user_id"],
+            author_user_id=_viewer_uid(viewer),
             author_role=author_role,
             body=body.strip(),
         )
@@ -1568,6 +1709,7 @@ def set_lesson_plan_status_route(
 ) -> RedirectResponse:
     """Coach-only: status transitions are the coach's read on the plan."""
     _require_coach(_current_viewer(request), "Lesson plan status")
+    _guard_plan_write(request, plan_id, "Lesson plan status")
     if status not in _LESSON_PLAN_STATUSES:
         raise HTTPException(400, f"Unknown lesson plan status: {status!r}")
     conn = db_connect(DB_PATH)
@@ -1628,6 +1770,7 @@ def set_debrief_focus_route(
     Coach-only.
     """
     _require_coach(_current_viewer(request), "Debrief focus edit")
+    _guard_obs_write(request, observation_id, "Debrief focus edit")
     if debrief_focus_gbf_id and debrief_focus_gbf_id not in GBF_STEPS_BY_ID:
         debrief_focus_gbf_id = None
     conn = db_connect(DB_PATH)
@@ -1711,6 +1854,7 @@ def assess_action_route(
     teacher self-assess would break the coach-mediates model.
     """
     _require_coach(_current_viewer(request), "Action assessment")
+    viewer = _guard_obs_write(request, observation_id, "Action assessment")
     if implementation not in ("not_observed", "partial", "full", "regressed"):
         raise HTTPException(400, f"Invalid implementation value: {implementation!r}")
     conn = db_connect(DB_PATH)
@@ -1732,7 +1876,7 @@ def assess_action_route(
             followup_observation_id=observation_id,
             implementation=implementation,
             evidence_notes=(evidence_notes or "").strip() or None,
-            assessed_by_user_id=_SEEDED_IDS["user_id"],
+            assessed_by_user_id=_viewer_uid(viewer),
         )
     finally:
         conn.close()
@@ -2793,7 +2937,7 @@ def create_cycle_route(
     Coach-only.
     """
     _require_coach(_current_viewer(request), "Cycle creation")
-    _guard_teacher_write(request, teacher_id, "Cycle creation")
+    viewer = _guard_teacher_write(request, teacher_id, "Cycle creation")
     conn = db_connect(DB_PATH)
     try:
         _refuse_if_archived(conn, teacher_id, "Cycle creation")
@@ -2808,9 +2952,9 @@ def create_cycle_route(
         try:
             cycle_id = create_cycle(
                 conn,
-                org_id=_SEEDED_IDS["org_id"],
+                org_id=viewer.get("org_id") or _SEEDED_IDS["org_id"],
                 teacher_id=teacher_id,
-                coach_user_id=_SEEDED_IDS["user_id"],
+                coach_user_id=_viewer_uid(viewer),
                 title=(title or "Coaching cycle"),
                 notes=notes or None,
                 expected_close_date=expected_close_date or None,
@@ -2837,6 +2981,7 @@ def update_cycle_close_date_route(
     expected_close_date: str = Form(...),
 ) -> RedirectResponse:
     _require_coach(_current_viewer(request), "Cycle date edit")
+    _guard_cycle_write(request, cycle_id, "Cycle date edit")
     from pipeline.db import update_cycle_expected_close
     conn = db_connect(DB_PATH)
     try:
@@ -2862,6 +3007,7 @@ def cycle_growth_story_edit(
     """
     if request.state.viewer["role"] != "coach":
         raise HTTPException(403, "Only the coach edits growth stories")
+    _guard_cycle_write(request, cycle_id, "Growth story edit")
     conn = db_connect(DB_PATH)
     try:
         conn.execute(
@@ -2888,6 +3034,7 @@ def close_cycle_route(
     Coach-only — closing a cycle is a records-of-record action.
     """
     _require_coach(_current_viewer(request), "Cycle close")
+    _guard_cycle_write(request, cycle_id, "Cycle close")
     conn = db_connect(DB_PATH)
     try:
         n_obs = conn.execute(
@@ -3112,6 +3259,7 @@ def attach_observation_cycle_route(
     same teacher, else the attach would corrupt cycle-scoped impact rollups.
     """
     _require_coach(_current_viewer(request), "Attach observation to cycle")
+    _guard_obs_write(request, observation_id, "Attach observation to cycle")
     conn = db_connect(DB_PATH)
     try:
         if coaching_cycle_id:
@@ -3142,6 +3290,7 @@ def attach_observation_lesson_plan_route(
     practice-log join and the auto-attach ambiguity resolver on future obs.
     """
     _require_coach(_current_viewer(request), "Attach observation to lesson plan")
+    _guard_obs_write(request, observation_id, "Attach observation to lesson plan")
     conn = db_connect(DB_PATH)
     try:
         if lesson_plan_id:
@@ -3203,7 +3352,8 @@ async def upload_district_document(
     text feeds the AI prompt for every teacher, so a teacher-role write
     would be a district-wide injection vector.
     """
-    _deny_teacher(_current_viewer(request), "District-documents upload")
+    viewer = _current_viewer(request)
+    _deny_teacher(viewer, "District-documents upload")
     import uuid as _uuid
     doc_id = str(_uuid.uuid4())
     ext = Path(document.filename or "upload").suffix or ".bin"
@@ -3221,13 +3371,13 @@ async def upload_district_document(
     try:
         create_district_document(
             conn,
-            org_id=_SEEDED_IDS["org_id"],
+            org_id=viewer.get("org_id") or _SEEDED_IDS["org_id"],
             title=title.strip(),
             doc_type=(doc_type or "").strip() or None,
             file_ref=str(dest_path),
             original_filename=document.filename or "upload",
             extracted_text=extracted,
-            uploaded_by_user_id=_SEEDED_IDS["user_id"],
+            uploaded_by_user_id=_viewer_uid(viewer),
             academic_year=academic_year,
         )
     finally:
@@ -3638,6 +3788,8 @@ def attach_goal_cycle_route(
     enforced (never allow cross-teacher goal↔cycle wiring).
     """
     _require_coach(_current_viewer(request), "Attach goal to cycle")
+    _guard_goal_write(request, goal_id, "Attach goal to cycle")
+    _guard_teacher_write(request, teacher_id, "Attach goal to cycle")
     conn = db_connect(DB_PATH)
     try:
         goal_row = conn.execute(
@@ -3665,6 +3817,7 @@ def agree_goal_route(request: Request, goal_id: str, teacher_id: str = Form(...)
     move a proposed goal to active. Anyone else is denied. Teacher-id used
     only for the redirect target is validated against the goal's owner.
     """
+    _guard_goal_write(request, goal_id, "Goal agree")
     conn = db_connect(DB_PATH)
     try:
         goal_row = conn.execute(
@@ -3672,8 +3825,6 @@ def agree_goal_route(request: Request, goal_id: str, teacher_id: str = Form(...)
         ).fetchone()
         if not goal_row:
             raise HTTPException(404, "Goal not found")
-        if not _viewer_can_edit_teacher(_current_viewer(request), goal_row["teacher_id"]):
-            raise HTTPException(403, "Not authorized to agree to this goal")
         from pipeline.db import GoalTransitionError
         try:
             agree_goal(conn, goal_id)
@@ -3706,6 +3857,7 @@ async def close_goal_route(
     form = await request.form()
 
     _require_coach(_current_viewer(request), "Goal close")
+    _guard_goal_write(request, goal_id, "Goal close")
     conn = db_connect(DB_PATH)
     try:
         goal_row = conn.execute(
@@ -3772,6 +3924,7 @@ def set_action_goal_route(
     cross-wire the impact rollup — same class of bug as attach-cycle.
     """
     _require_coach(_current_viewer(request), "Action → goal link")
+    _guard_action_write(request, action_id, "Action → goal link")
     conn = db_connect(DB_PATH)
     try:
         row = conn.execute(
@@ -3805,7 +3958,7 @@ def add_private_note_route(
     or another teacher's record.
     """
     _require_coach(_current_viewer(request), "Private notes")
-    _guard_teacher_write(request, teacher_id, "Private notes")
+    viewer = _guard_teacher_write(request, teacher_id, "Private notes")
     if not body.strip():
         raise HTTPException(400, "Note body required")
     conn = db_connect(DB_PATH)
@@ -3813,8 +3966,8 @@ def add_private_note_route(
     try:
         add_coach_private_note(
             conn,
-            org_id=_SEEDED_IDS["org_id"],
-            author_user_id=_SEEDED_IDS["user_id"],
+            org_id=viewer.get("org_id") or _SEEDED_IDS["org_id"],
+            author_user_id=_viewer_uid(viewer),
             teacher_id=teacher_id,
             body=body.strip(),
             observation_id=observation_id or None,
@@ -3843,11 +3996,11 @@ def delete_private_note_route(
     for a future multi-coach world.
     """
     _require_coach(_current_viewer(request), "Private-note delete")
-    _guard_teacher_write(request, teacher_id, "Private-note delete")
+    viewer = _guard_teacher_write(request, teacher_id, "Private-note delete")
     conn = db_connect(DB_PATH)
     try:
         delete_private_note(
-            conn, note_id=note_id, author_user_id=_SEEDED_IDS["user_id"]
+            conn, note_id=note_id, author_user_id=_viewer_uid(viewer)
         )
     finally:
         conn.close()
@@ -3914,6 +4067,7 @@ def archive_observation_route(
     observation and filter ``o.deleted_at IS NULL``.
     """
     _require_coach(_current_viewer(request), "Observation archive")
+    _guard_obs_write(request, observation_id, "Observation archive")
     conn = db_connect(DB_PATH)
     try:
         # Get teacher_id for the redirect back to their hub — that's where
@@ -3937,6 +4091,7 @@ def restore_observation_route(
     request: Request, observation_id: str
 ) -> RedirectResponse:
     _require_coach(_current_viewer(request), "Observation restore")
+    _guard_obs_write(request, observation_id, "Observation restore")
     conn = db_connect(DB_PATH)
     try:
         restore_observation(conn, observation_id=observation_id)
@@ -4183,10 +4338,9 @@ def switch_viewer(
 @app.post("/actions/{action_id}/teacher-account")
 def action_set_teacher_account(request: Request, action_id: str, teacher_account: str = Form(...)) -> RedirectResponse:
     """Teacher (or coach on the teacher's behalf) records their own account of trying the action."""
+    _guard_action_write(request, action_id, "Teacher account on action")
     conn = db_connect(DB_PATH)
     try:
-        if not _viewer_from_action(request.state.viewer, conn, action_id):
-            raise HTTPException(403, "Not your action")
         set_teacher_account_on_action(conn, action_id=action_id, teacher_account=teacher_account.strip())
         row = conn.execute(
             "SELECT source_observation_id, teacher_id FROM bite_sized_action_tracking WHERE id = ?",
@@ -4216,10 +4370,9 @@ def obs_hlm_response(
     the teacher never negotiates with AI output directly, only with what the
     coach chose to publish.
     """
+    viewer = _guard_obs_write(request, observation_id, "HLM response")
     conn = db_connect(DB_PATH)
     try:
-        if not _viewer_from_obs(request.state.viewer, conn, observation_id):
-            raise HTTPException(403, "Not your observation")
         move = get_current_coach_move(conn, observation_id)
         if not move:
             raise HTTPException(409, "Your coach hasn't published a move for this observation yet")
@@ -4228,7 +4381,7 @@ def obs_hlm_response(
             observation_id=observation_id,
             response_type=response_type,
             teacher_note=(teacher_note or None),
-            teacher_user_id=_SEEDED_IDS["user_id"],
+            teacher_user_id=_viewer_uid(viewer),
         )
         # Attach the response to the specific published-move version.
         conn.execute(
@@ -4249,9 +4402,10 @@ def obs_hlm_ack(request: Request, observation_id: str) -> RedirectResponse:
     """Coach acknowledges the teacher's response — closes the attention item."""
     if request.state.viewer["role"] != "coach":
         raise HTTPException(403, "Only the coach can acknowledge")
+    viewer = _guard_obs_write(request, observation_id, "HLM response acknowledge")
     conn = db_connect(DB_PATH)
     try:
-        acknowledge_hlm_response(conn, observation_id=observation_id, coach_user_id=_SEEDED_IDS["user_id"])
+        acknowledge_hlm_response(conn, observation_id=observation_id, coach_user_id=_viewer_uid(viewer))
     finally:
         conn.close()
     return RedirectResponse(url=f"/observations/{observation_id}", status_code=303)
@@ -4260,13 +4414,12 @@ def obs_hlm_ack(request: Request, observation_id: str) -> RedirectResponse:
 @app.post("/goals/{goal_id}/releasing")
 def goal_set_releasing(request: Request, goal_id: str, releasing: str = Form("")) -> RedirectResponse:
     """Set Bridges' 'ending' text on a goal — what the teacher is setting aside."""
+    _guard_goal_write(request, goal_id, "Goal releasing")
     conn = db_connect(DB_PATH)
     try:
         row = conn.execute("SELECT teacher_id FROM professional_goals WHERE id = ?", (goal_id,)).fetchone()
         if not row:
             raise HTTPException(404)
-        if not _viewer_can_edit_teacher(request.state.viewer, row["teacher_id"]):
-            raise HTTPException(403)
         set_goal_releasing(conn, goal_id=goal_id, releasing=(releasing.strip() or None))
     finally:
         conn.close()
@@ -4291,6 +4444,7 @@ def obs_publish_coach_move(
     """Coach publishes a new move for the teacher (creates or supersedes)."""
     if request.state.viewer["role"] != "coach":
         raise HTTPException(403, "Only the coach publishes moves")
+    viewer = _guard_obs_write(request, observation_id, "Coach move publish")
     if not move_text.strip():
         raise HTTPException(400, "move_text required")
     conn = db_connect(DB_PATH)
@@ -4303,7 +4457,7 @@ def obs_publish_coach_move(
                 gbf_step_id=(gbf_step_id or None),
                 related_core_teacher_skill=(related_core_teacher_skill or None),
                 derived_from_ai=bool(derived_from_ai),
-                published_by_user_id=_SEEDED_IDS["user_id"],
+                published_by_user_id=_viewer_uid(viewer),
             )
         except sqlite3.IntegrityError as e:
             # `uq_pcm_current` caught a concurrent publish for the same
@@ -4338,6 +4492,8 @@ def obs_edit_coach_move(
         raise HTTPException(403, "Only the coach edits moves")
     if not move_text.strip():
         raise HTTPException(400, "move_text required")
+    # Move id → observation id → teacher id → access check. Same posture as
+    # other entity-scoped writes.
     conn = db_connect(DB_PATH)
     try:
         row = conn.execute(
@@ -4345,6 +4501,11 @@ def obs_edit_coach_move(
         ).fetchone()
         if not row:
             raise HTTPException(404)
+    finally:
+        conn.close()
+    _guard_obs_write(request, row["observation_id"], "Coach move edit")
+    conn = db_connect(DB_PATH)
+    try:
         edit_coach_move(
             conn, move_id=move_id, move_text=move_text.strip(),
             gbf_step_id=(gbf_step_id or None),
@@ -5023,9 +5184,7 @@ def add_practice_log_route(
     Auto-links to the teacher's current active cycle. Optional ``action_id``
     ties the entry to a specific bite-sized action being practiced.
     """
-    viewer = request.state.viewer
-    if not _viewer_can_edit_teacher(viewer, teacher_id):
-        raise HTTPException(403, "Not your teacher")
+    viewer = _guard_teacher_write(request, teacher_id, "Practice log entry")
     if not entry_text.strip():
         raise HTTPException(400, "entry_text required")
     conn = db_connect(DB_PATH)
