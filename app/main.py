@@ -4317,9 +4317,16 @@ def signin_submit(
     have an account is a free account-enumeration oracle.
     """
     email = (email or "").strip().lower()
+    # `next` is coach-supplied and may contain URL-meaningful characters
+    # (?, &, #, %) — a legitimate next="/observations/abc?tab=score"
+    # would otherwise corrupt the round-trip when spliced raw into a
+    # query string. quote() encodes exactly those characters. Do it
+    # once, reuse for every error-redirect below.
+    from urllib.parse import quote
+    _next_qs = quote(next or "", safe="/")
     if not email or "@" not in email:
         return RedirectResponse(
-            url=f"/signin?error=bad_email&next={next or ''}", status_code=303,
+            url=f"/signin?error=bad_email&next={_next_qs}", status_code=303,
         )
     # Rate-limit BEFORE minting the token so a bot-flood doesn't fill the
     # outbound_mail queue + burn magic-link table rows. IP dimension bounds
@@ -4333,9 +4340,8 @@ def signin_submit(
         # coach-facing so a reroute back to /signin with a query param
         # would be prettier — but 429 is what a bot's rate-tracking
         # sees, and it lets the browser back-button work sanely.
-        from urllib.parse import quote
         return RedirectResponse(
-            url=f"/signin?error=rate_limited&msg={quote(reason)}&next={next or ''}",
+            url=f"/signin?error=rate_limited&msg={quote(reason)}&next={_next_qs}",
             status_code=303,
         )
     safe_next = next if (next and _is_safe_same_origin_path(next)) else "/"

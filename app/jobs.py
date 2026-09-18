@@ -468,6 +468,13 @@ def _run_job(
         except Exception:
             pass
         _set_status(db_path, observation_id, "failed", failure_reason=raw[:2000])
+        # Re-raise so JobWorker's retry logic sees the failure. Without
+        # this the outer try/except in _claim_and_run_one takes the
+        # success path and marks the queue row 'complete' with attempts=1,
+        # making MAX_JOB_ATTEMPTS entirely dead code — a transient
+        # Anthropic 503 or a flaky network flap would be permanently
+        # fatal to the observation.
+        raise
 
 
 def _persist_report(
