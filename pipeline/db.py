@@ -271,6 +271,24 @@ def _apply_additive_migrations(conn: sqlite3.Connection) -> None:
            ON consent_records(teacher_id) WHERE revoked_at IS NULL"""
     )
 
+    # ---- GBF step-id migration (mana → mgmt) -------------------------------
+    # The GBF slug builder previously used `trajectory[:4]`, which turned
+    # "management" into "mana" instead of the "mgmt" the docs, the prompt,
+    # and the schema-example all cite. Rewrites of _mk fix new ids; any
+    # stored id from before this fix stays broken until we migrate. Do the
+    # substitution once against the two columns that carry gbf_step_id.
+    # No-op when nothing matches; idempotent.
+    conn.execute(
+        """UPDATE observations
+           SET debrief_focus_gbf_id = REPLACE(debrief_focus_gbf_id, '_mana_', '_mgmt_')
+           WHERE debrief_focus_gbf_id LIKE '%\\_mana\\_%' ESCAPE '\\'"""
+    )
+    conn.execute(
+        """UPDATE published_coach_moves
+           SET gbf_step_id = REPLACE(gbf_step_id, '_mana_', '_mgmt_')
+           WHERE gbf_step_id LIKE '%\\_mana\\_%' ESCAPE '\\'"""
+    )
+
     # ---- Missing indexes on hot aggregate paths ----------------------------
     # Every dashboard / roster / compliance aggregate filters `o.deleted_at
     # IS NULL` combined with a teacher_id or org_id predicate. The existing

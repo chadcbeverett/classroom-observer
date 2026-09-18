@@ -4601,6 +4601,14 @@ def obs_publish_coach_move(
     viewer = _guard_obs_write(request, observation_id, "Coach move publish")
     if not move_text.strip():
         raise HTTPException(400, "move_text required")
+    # Validate the AI/coach-submitted GBF step id against the actual scope
+    # and sequence. A phantom id (from a prompt-echoed example that no longer
+    # matches, or an AI hallucination) would otherwise persist as-is and
+    # render as an empty label everywhere. Matches the pattern already used
+    # on the debrief-focus form at obs_set_debrief_focus.
+    _gbf = (gbf_step_id or "").strip() or None
+    if _gbf and _gbf not in GBF_STEPS_BY_ID:
+        _gbf = None
     conn = db_connect(DB_PATH)
     try:
         try:
@@ -4608,7 +4616,7 @@ def obs_publish_coach_move(
                 conn,
                 observation_id=observation_id,
                 move_text=move_text.strip(),
-                gbf_step_id=(gbf_step_id or None),
+                gbf_step_id=_gbf,
                 related_core_teacher_skill=(related_core_teacher_skill or None),
                 derived_from_ai=bool(derived_from_ai),
                 published_by_user_id=_viewer_uid(viewer),
@@ -4658,11 +4666,16 @@ def obs_edit_coach_move(
     finally:
         conn.close()
     _guard_obs_write(request, row["observation_id"], "Coach move edit")
+    # Same GBF-id validation as the publish route above — a phantom id would
+    # otherwise persist and render as an empty label everywhere.
+    _gbf = (gbf_step_id or "").strip() or None
+    if _gbf and _gbf not in GBF_STEPS_BY_ID:
+        _gbf = None
     conn = db_connect(DB_PATH)
     try:
         edit_coach_move(
             conn, move_id=move_id, move_text=move_text.strip(),
-            gbf_step_id=(gbf_step_id or None),
+            gbf_step_id=_gbf,
             related_core_teacher_skill=(related_core_teacher_skill or None),
         )
         return RedirectResponse(url=f"/observations/{row['observation_id']}", status_code=303)

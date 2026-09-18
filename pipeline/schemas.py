@@ -285,6 +285,18 @@ def validate_against_rubric(report: ObservationReport, rubric: Rubric) -> None:
                 f"Coaching recommendation references unknown domain {rec.related_domain!r}."
             )
 
+    # Highest-leverage move → domain. The API-side enum injection in
+    # score._sanitize_schema already constrains this, but a schema drift
+    # (rubric edited between score-time and re-validate) or a test bypass
+    # would otherwise silently persist an HLM citing a domain that doesn't
+    # appear in the rating aggregate. Belt-and-suspenders.
+    hlm = getattr(report, "highest_leverage_move", None)
+    if hlm and getattr(hlm, "related_domain", None):
+        if not rubric.is_valid_domain(hlm.related_domain):
+            errors.append(
+                f"Highest-leverage move references unknown domain {hlm.related_domain!r}."
+            )
+
     # Coaching skill must have been named in some domain's implicated skills.
     named_skills = set()
     for da in report.domain_assessments:

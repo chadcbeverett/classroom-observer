@@ -39,12 +39,25 @@ _PHASE_LABELS = {
 }
 
 
+# Short-form trajectory abbreviation used in step ids. The prompt, the
+# schema description, and this module's docstring all cite ids in the shape
+# `phase2_mgmt_teacher_radar` — before this table existed, ``trajectory[:4]``
+# turned "management" into "mana" (not "mgmt"), so every AI-returned
+# gbf_step_id silently failed lookup and rendered as an empty label. Keep
+# the map explicit so a future third trajectory doesn't recreate the bug.
+_TRAJ_SHORT = {
+    "management": "mgmt",
+    "rigor": "rigor",
+}
+
+
 def _mk(phase_id: str, trajectory: str, number: int, name: str,
         headline: str, bullets: List[str]) -> GBFStep:
     slug = name.lower()
     slug = "".join(c if c.isalnum() else "_" for c in slug)
     slug = "_".join(w for w in slug.split("_") if w)
-    step_id = f"{phase_id}_{trajectory[:4]}_{slug}"
+    traj_short = _TRAJ_SHORT.get(trajectory, trajectory[:4])
+    step_id = f"{phase_id}_{traj_short}_{slug}"
     return GBFStep(
         id=step_id,
         phase_id=phase_id,

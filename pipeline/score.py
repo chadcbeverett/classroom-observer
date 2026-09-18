@@ -211,6 +211,15 @@ def _sanitize_schema(schema: dict, rubric: Rubric) -> dict:
     add_enum_to("DomainAssessment", "overall_rating", rubric.rating_levels)
     add_enum_to("DescriptorScore", "rating", rubric.rating_levels)
     add_enum_to("CoachingRecommendation", "related_domain", rubric.domains)
+    # HighestLeverageMove.related_domain was previously unconstrained. The
+    # field description asks the model to "match one of the rubric's domains"
+    # but Pydantic accepts any string and validate_against_rubric didn't
+    # inspect HLM. A paraphrase ("Classroom Engagement" instead of TNTP's
+    # "Student Engagement") passed schema + validation, persisted, and then
+    # silently dropped from every rating aggregate keyed by rubric.domains —
+    # the coach saw an HLM citing a domain that didn't appear elsewhere on
+    # the same page. Constrain it here at the API level to match.
+    add_enum_to("HighestLeverageMove", "related_domain", rubric.domains)
 
     return schema
 
