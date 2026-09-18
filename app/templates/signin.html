@@ -14,6 +14,10 @@
     <div class="card" style="background:#fdf2f0; border-color:#e6c9c9; margin: 16px 0;">
       That sign-in link didn't work — it may have expired, been used already, or been mistyped. Ask for a fresh one below.
     </div>
+  {% elif error == 'rate_limited' %}
+    <div class="card" style="background:#fdf2f0; border-color:#e6c9c9; margin: 16px 0;">
+      {{ request.query_params.get('msg') or 'Too many sign-in requests recently. Try again in a bit.' }}
+    </div>
   {% endif %}
 
   <form method="post" action="/signin" class="card" style="margin-top: 16px;">

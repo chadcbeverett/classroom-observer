@@ -147,6 +147,11 @@ _SEEDED_IDS: dict[str, str] = {}
 
 @app.on_event("startup")
 def _bootstrap() -> None:
+    # Structured JSON logging when OBSERVER_LOG_FORMAT=json is set; no-op
+    # otherwise (uvicorn's human-readable format stays).
+    from app.logging_setup import configure as _configure_logging
+    _configure_logging()
+
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     conn = db_connect(DB_PATH)
@@ -485,7 +490,7 @@ def _current_viewer(request: Request) -> dict:
 # slip past the anon gate by a startswith accident (the middleware treats
 # every allowlist entry as an exact-or-with-trailing-slash prefix).
 _ANON_ALLOWED_EXACT = frozenset({
-    "/signin", "/signout", "/favicon.ico", "/dev/mail",
+    "/signin", "/signout", "/favicon.ico", "/dev/mail", "/health",
 })
 _ANON_ALLOWED_PREFIXES = (
     "/auth/", "/static/",
@@ -4306,6 +4311,23 @@ def signin_submit(
         return RedirectResponse(
             url=f"/signin?error=bad_email&next={next or ''}", status_code=303,
         )
+    # Rate-limit BEFORE minting the token so a bot-flood doesn't fill the
+    # outbound_mail queue + burn magic-link table rows. IP dimension bounds
+    # spray; email dimension bounds targeted-inbox spam. See
+    # app/rate_limit.py for the tunable window/limit values.
+    ip = request.client.host if request.client else "unknown"
+    from app.rate_limit import check_signin
+    allowed, reason = check_signin(ip=ip, email=email)
+    if not allowed:
+        # 429 with a plain-text explanation. The signin form itself is
+        # coach-facing so a reroute back to /signin with a query param
+        # would be prettier — but 429 is what a bot's rate-tracking
+        # sees, and it lets the browser back-button work sanely.
+        from urllib.parse import quote
+        return RedirectResponse(
+            url=f"/signin?error=rate_limited&msg={quote(reason)}&next={next or ''}",
+            status_code=303,
+        )
     safe_next = next if (next and _is_safe_same_origin_path(next)) else "/"
     conn = db_connect(DB_PATH)
     try:
@@ -4389,6 +4411,50 @@ def signout(request: Request) -> RedirectResponse:
     resp = RedirectResponse(url="/signin", status_code=303)
     resp.delete_cookie(SESSION_COOKIE, path="/")
     return resp
+
+
+@app.get("/health")
+def health(request: Request) -> JSONResponse:
+    """Liveness + readiness probe for the reverse proxy / orchestrator.
+
+    Returns 200 when the DB is reachable AND every enabled background
+    thread (SMTP sender, job worker) is alive. 503 with per-component
+    detail on any failure so ops sees what broke, not just that
+    something did.
+
+    Public (in _ANON_ALLOWED_EXACT) — must be reachable without a
+    session cookie so the LB can probe unauthenticated. Reports no
+    secrets; no per-request data.
+    """
+    checks: dict[str, str] = {}
+    overall_ok = True
+
+    # DB ping — cheap, catches "SQLite file missing", "wrong perms",
+    # "corrupt WAL". Rolls back any implicit txn immediately.
+    try:
+        conn = db_connect(DB_PATH)
+        try:
+            conn.execute("SELECT 1").fetchone()
+        finally:
+            conn.close()
+        checks["db"] = "ok"
+    except Exception as e:
+        checks["db"] = f"error: {type(e).__name__}"
+        overall_ok = False
+
+    # SMTP sender liveness — only checked when SMTP is configured. An
+    # unset SMTP_HOST means dev mode; not a health failure.
+    if os.environ.get("SMTP_HOST", "").strip():
+        from app import smtp_sender as _smtp_mod
+        sender = _smtp_mod._singleton  # module-private read, no wrappers to update
+        if sender is not None and sender._thread is not None and sender._thread.is_alive():
+            checks["smtp"] = "ok"
+        else:
+            checks["smtp"] = "thread not alive"
+            overall_ok = False
+
+    payload = {"status": "healthy" if overall_ok else "unhealthy", "checks": checks}
+    return JSONResponse(payload, status_code=200 if overall_ok else 503)
 
 
 @app.get("/dev/mail", response_class=HTMLResponse)

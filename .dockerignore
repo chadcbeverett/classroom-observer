@@ -1,0 +1,27 @@
+# Local build/venv/state — never ship these in the image
+.venv
+__pycache__
+*.pyc
+*.pyo
+
+# Local DB + uploads. In production these live in the /data volume mount,
+# not baked into the image.
+reports/
+app/uploads/
+app/lesson_plans/
+district_documents/
+
+# Local dev conveniences
+.git
+.gitignore
+.env
+.env.*
+*.log
+*.sqlite
+*.sqlite-*
+.DS_Store
+
+# Test / scratch outputs
+tools/baselines/
+.claude/
+.pytest_cache/

@@ -1,0 +1,51 @@
+# Classroom Observer — production docker-compose file
+#
+# Bring up:
+#     cp .env.example .env      # fill in ANTHROPIC_API_KEY + SMTP_* + OBSERVER_PUBLIC_URL
+#     docker compose up -d
+#
+# Then run the onboarding ceremony inside the container (one-time):
+#     docker compose exec app python tools/onboard_district.py \
+#         --org-name "Testville Unified" --org-slug testville \
+#         --coach-email jane@testville.k12.us --coach-name "Jane Rivera" \
+#         --seed-district-context
+#
+# See PILOT_RUNBOOK.md for the full deployment story.
+
+services:
+  app:
+    build: .
+    image: classroom-observer:latest
+    restart: unless-stopped
+    ports:
+      # Bind to loopback only; put your TLS-terminating reverse proxy
+      # (Caddy, nginx, Traefik) in front. If you're exposing 0.0.0.0 to
+      # the world without a reverse proxy, remove the 127.0.0.1: prefix
+      # AND make sure OBSERVER_PUBLIC_URL matches so cookies stay Secure.
+      - "127.0.0.1:8000:8000"
+    volumes:
+      # Persistent state. Bind-mount to a host path (backups!) or use a
+      # named docker volume; either survives image rebuilds.
+      - ./data:/data
+    environment:
+      # ---- Required in production ----
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?ANTHROPIC_API_KEY is required}
+      OBSERVER_PUBLIC_URL: ${OBSERVER_PUBLIC_URL:?OBSERVER_PUBLIC_URL is required (e.g. https://coach.your-district.org)}
+      SMTP_HOST: ${SMTP_HOST:?SMTP_HOST is required (magic-link email delivery)}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:?SMTP_USER is required}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:?SMTP_PASSWORD is required}
+      SMTP_FROM: ${SMTP_FROM:?SMTP_FROM is required}
+      SMTP_STARTTLS: ${SMTP_STARTTLS:-1}
+      # ---- Optional ----
+      # OBSERVER_LOG_FORMAT: json    # structured logs (default: text)
+      # OBSERVER_DB: /data/observations.sqlite    # DB path (default already inside /data)
+      # OBSERVER_UPLOADS: /data/uploads           # uploads path (default already inside /data)
+    healthcheck:
+      # Same probe the Dockerfile ships. Overridden here so compose sees
+      # the container as healthy/unhealthy for `docker compose ps`.
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
