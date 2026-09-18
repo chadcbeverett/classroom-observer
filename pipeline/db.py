@@ -258,6 +258,49 @@ def _apply_additive_migrations(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_outbound_mail_unsent ON outbound_mail(sent_at, created_at)"
     )
 
+    # ---- Persistent job queue ---------------------------------------------
+    # The AI scoring pipeline used to run inside an in-process
+    # ThreadPoolExecutor with no persistence — a uvicorn crash / SIGKILL /
+    # container restart lost every queued job, and a mid-flight job left
+    # observation status pinned at 'transcribing' or 'scoring' forever.
+    # (The startup sweep on observations reclaimed the latter as 'failed',
+    # but the queued backlog was gone.)
+    #
+    # New table: submit_job INSERTs here; a worker thread claims one row
+    # at a time and runs the pipeline. Restarts resume: 'pending' stays
+    # pending (worker picks up on restart), 'running' rows older than
+    # STUCK_JOB_MINUTES get reset by the startup sweep. Failed attempts
+    # up to max_attempts re-queue as 'pending' with `last_error` set.
+    #
+    # Kept SQLite-backed so we don't drag Redis into the pilot deploy;
+    # the interface is the same one RQ would offer, so swapping in RQ
+    # later is a worker-class replacement, not a route rewrite.
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS job_queue (
+            id                  TEXT PRIMARY KEY,
+            kind                TEXT NOT NULL,
+                -- 'score_observation' is the only kind today; keep the
+                -- column so future one-off ceremonies (re-render report,
+                -- reprocess with a new rubric) share the queue.
+            payload             TEXT NOT NULL,   -- JSON blob, kind-specific
+            status              TEXT NOT NULL DEFAULT 'pending'
+                CHECK (status IN ('pending', 'running', 'complete', 'failed')),
+            attempts            INTEGER NOT NULL DEFAULT 0,
+            max_attempts        INTEGER NOT NULL DEFAULT 3,
+            created_at          TEXT NOT NULL,
+            started_at          TEXT,
+            finished_at         TEXT,
+            last_error          TEXT
+        )"""
+    )
+    # Partial index — only "live" jobs. 'complete' rows accumulate but
+    # never hit the worker's SELECT again, so no need to index them.
+    conn.execute(
+        """CREATE INDEX IF NOT EXISTS idx_job_queue_live
+           ON job_queue(status, created_at)
+           WHERE status IN ('pending', 'running')"""
+    )
+
     # ---- Consent: the schema table exists; add the audit column for who
     # electronically signed. Also ensure the "one active consent per teacher"
     # invariant via partial-unique index — matches the "org-level, revocable"

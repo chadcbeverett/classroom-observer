@@ -200,15 +200,25 @@ def _bootstrap() -> None:
     from app.smtp_sender import start_if_configured as _start_smtp
     _start_smtp(DB_PATH)
 
+    # Start the persistent job worker. Reads from job_queue every ~2s and
+    # runs one scoring pipeline at a time. A restart doesn't lose queued
+    # work — pending rows survive; the sweep above resets any mid-flight
+    # 'running' rows back to 'pending' (or 'failed' if retries exhausted).
+    from app.jobs import start_worker as _start_worker
+    _start_worker(DB_PATH)
+
 
 @app.on_event("shutdown")
-def _shutdown_smtp_sender() -> None:
-    """Give the SMTP thread a chance to finish an in-flight send + close
-    its connection cleanly before the process exits. Bounded wait — a
-    stuck send won't hold up shutdown past a few seconds.
+def _shutdown_background_threads() -> None:
+    """Give the background threads a chance to finish their current unit
+    of work and close their DB connections cleanly before the process
+    exits. Bounded waits — a wedged thread doesn't hold up shutdown
+    past its timeout.
     """
     from app.smtp_sender import stop_if_running
+    from app.jobs import stop_worker
     stop_if_running()
+    stop_worker()
 
 
 # ---------------------------------------------------------------------------
@@ -4452,6 +4462,17 @@ def health(request: Request) -> JSONResponse:
         else:
             checks["smtp"] = "thread not alive"
             overall_ok = False
+
+    # Job worker liveness — always checked (worker is a hard dep of the
+    # scoring pipeline). If the worker thread died, uploads queue but
+    # never process; better to fail the health check so the LB rotates.
+    from app import jobs as _jobs_mod
+    worker = _jobs_mod._worker_singleton
+    if worker is not None and worker._thread is not None and worker._thread.is_alive():
+        checks["job_worker"] = "ok"
+    else:
+        checks["job_worker"] = "thread not alive"
+        overall_ok = False
 
     payload = {"status": "healthy" if overall_ok else "unhealthy", "checks": checks}
     return JSONResponse(payload, status_code=200 if overall_ok else 503)

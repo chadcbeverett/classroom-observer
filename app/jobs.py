@@ -1,11 +1,23 @@
-"""In-process background job runner for the local FastAPI app.
+"""Persistent job queue + in-process worker for the AI scoring pipeline.
 
-Single-worker ThreadPoolExecutor. Adequate for one-user-on-one-Mac. For a
-hosted multi-user deployment, replace with RQ + Redis (the ``submit_job``
-interface stays the same).
+Old shape: ThreadPoolExecutor(max_workers=1) inside uvicorn. A crash /
+SIGKILL / container restart lost every queued job with no trace, and a
+mid-flight job left observations.status pinned at 'transcribing' or
+'scoring' forever (the startup sweep reclaimed those to 'failed', but
+the QUEUED backlog was gone).
 
-Each job runs the full pipeline against an ``observations`` row identified by
-its DB id, updating ``status`` at each phase so the UI can poll for progress.
+New shape: submit_job INSERTs a row into `job_queue` (see the schema in
+pipeline/db.py::_apply_additive_migrations). A background thread —
+JobWorker, structurally identical to app.smtp_sender.SmtpSender — polls
+the table, atomically claims one job at a time, runs the pipeline, and
+records outcome. Restarts resume: 'pending' rows stay pending (worker
+picks up on next boot), 'running' rows older than STUCK_JOB_MINUTES get
+reset by the startup sweep (retried if attempts < max, else 'failed').
+
+Kept SQLite-backed so the pilot deploy doesn't need Redis. The
+interface — ``submit_job(...)`` — is identical to what RQ would offer,
+so swapping the worker for a proper queue later is a class replacement,
+not a route rewrite.
 """
 from __future__ import annotations
 
@@ -13,9 +25,10 @@ import json
 import shutil
 import sqlite3
 import sys
+import threading
 import traceback
-from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -29,55 +42,89 @@ from pipeline.rubric import get_rubric
 from pipeline.score import score_observation
 from pipeline.transcribe import serialize, transcribe
 
-_executor: Optional[ThreadPoolExecutor] = None
+import logging
+_log = logging.getLogger("uvicorn.error")
 
-
-def get_executor() -> ThreadPoolExecutor:
-    """Lazily construct the shared single-worker executor."""
-    global _executor
-    if _executor is None:
-        _executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="observer-job")
-    return _executor
+# Poll cadence for the worker thread. Cheap SELECT (partial index on
+# status IN ('pending','running')). Latency to job start on an idle
+# queue is at most this interval.
+WORKER_POLL_INTERVAL_SECONDS = 2.0
+MAX_JOB_ATTEMPTS = 3
 
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-# Watchdog: reclaim observations left in an in-flight status by a crashed
+# Watchdog: reclaim jobs + observations left in-flight by a crashed
 # worker or a killed process. Called at app startup (see app.main).
 #
-# Because the executor is in-process and stateless across restarts, any job
-# alive at the moment uvicorn was signaled is gone forever — but the DB
-# row still says 'transcribing' or 'scoring', spinning forever in every
-# in-flight aggregate and blocking the coach from re-uploading. This sweep
-# marks such rows 'failed' with a clear reason so the coach can retry.
+# Two things to reclaim:
+#   (a) job_queue rows in 'running' state older than the threshold —
+#       reset to 'pending' for retry (or 'failed' if attempts >= max).
+#       The worker picks them up on its next poll cycle.
+#   (b) observations in 'transcribing' or 'scoring' status older than
+#       the threshold — mark 'failed' with a clear reason. Covers the
+#       case where the worker crashed mid-pipeline BEFORE landing a
+#       final job status; the observation was mid-flight when the
+#       process died and neither status will progress on its own.
 #
-# Threshold is generous (30 min) because Whisper on a full-lesson video can
-# legitimately take that long. Adjust if the pipeline gets faster.
+# Threshold is generous (30 min) because Whisper on a full-lesson video
+# can legitimately take that long. Adjust if the pipeline gets faster.
 STUCK_JOB_MINUTES = 30
 
 
 def sweep_stuck_jobs(db_path: Path) -> int:
-    """Mark observations stuck in transcribing/scoring older than the
-    threshold as failed. Returns the number reclaimed. Safe to call at
-    every startup — idempotent when nothing is stuck.
+    """Reset stuck job_queue rows AND mark stuck observations failed.
+    Returns the total number reclaimed (jobs + observations).
+    Idempotent — safe to call at every startup.
     """
-    from datetime import timedelta
     cutoff = (datetime.now(timezone.utc) - timedelta(minutes=STUCK_JOB_MINUTES)).isoformat()
+    reclaimed = 0
     conn = db_connect(db_path)
     try:
-        # `uploaded_at` is the closest to "when did the pipeline start" — the
-        # status column has no timestamp of its last transition, so we use
-        # uploaded_at as a coarse lower bound. A newly-uploaded obs won't
-        # trip the sweep even if it lands in transcribing immediately.
-        rows = conn.execute(
+        # (a) job_queue rows that were claimed but never finished.
+        stuck_jobs = conn.execute(
+            """SELECT id, attempts, max_attempts FROM job_queue
+               WHERE status = 'running' AND started_at < ?""",
+            (cutoff,),
+        ).fetchall()
+        for row in stuck_jobs:
+            reclaimed += 1
+            if row["attempts"] < row["max_attempts"]:
+                # Retry: back to pending. The worker will re-attempt.
+                conn.execute(
+                    """UPDATE job_queue
+                       SET status = 'pending', started_at = NULL,
+                           last_error = ?
+                       WHERE id = ?""",
+                    (f"Reset by startup sweep — process was likely killed mid-run. "
+                     f"Attempt {row['attempts']} of {row['max_attempts']}.",
+                     row["id"]),
+                )
+            else:
+                # Out of attempts. Mark failed permanently.
+                conn.execute(
+                    """UPDATE job_queue
+                       SET status = 'failed', finished_at = ?,
+                           last_error = ?
+                       WHERE id = ?""",
+                    (_now_iso(),
+                     f"Exhausted {row['max_attempts']} attempts; last "
+                     f"attempt didn't finish within {STUCK_JOB_MINUTES} min.",
+                     row["id"]),
+                )
+        # (b) observations that reflect a mid-pipeline crash. `uploaded_at`
+        # is the closest bound we have on "when did processing start" —
+        # good enough because a newly-uploaded obs won't trip the cutoff.
+        stuck_obs = conn.execute(
             """SELECT id FROM observations
                WHERE status IN ('transcribing', 'scoring')
                  AND uploaded_at < ?""",
             (cutoff,),
         ).fetchall()
-        for row in rows:
+        for row in stuck_obs:
+            reclaimed += 1
             conn.execute(
                 """UPDATE observations
                    SET status = 'failed',
@@ -88,7 +135,7 @@ def sweep_stuck_jobs(db_path: Path) -> int:
                  row["id"]),
             )
         conn.commit()
-        return len(rows)
+        return reclaimed
     finally:
         conn.close()
 
@@ -113,17 +160,221 @@ def submit_job(
     rubric_id: str,
     whisper_model: str = "medium",
     frame_interval: float = 60.0,
-) -> None:
-    """Queue a scoring job for an existing observation row.
+) -> str:
+    """Queue a scoring job. Returns the job_queue row id.
 
     Fire-and-forget from the caller's perspective. UI polls
-    ``GET /observations/{id}/status`` for progress.
+    ``GET /observations/{id}/status`` for progress. If the app is
+    restarted before the worker picks this row up, the row persists
+    as 'pending' and the worker on the new boot runs it.
     """
-    get_executor().submit(
-        _run_job,
-        db_path, observation_id, video_path, rubric_id,
-        whisper_model, frame_interval,
-    )
+    job_id = str(uuid.uuid4())
+    payload = json.dumps({
+        "db_path": str(db_path),
+        "observation_id": observation_id,
+        "video_path": str(video_path),
+        "rubric_id": rubric_id,
+        "whisper_model": whisper_model,
+        "frame_interval": frame_interval,
+    })
+    conn = db_connect(db_path)
+    try:
+        conn.execute(
+            """INSERT INTO job_queue
+                 (id, kind, payload, status, max_attempts, created_at)
+               VALUES (?, 'score_observation', ?, 'pending', ?, ?)""",
+            (job_id, payload, MAX_JOB_ATTEMPTS, _now_iso()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    # Wake the worker if it's sleeping — cheaper than making it poll faster.
+    if _worker_singleton is not None:
+        _worker_singleton.wake()
+    return job_id
+
+
+# ---------------------------------------------------------------------------
+# Worker — one background thread that drains job_queue.
+# ---------------------------------------------------------------------------
+
+_worker_singleton: Optional["JobWorker"] = None
+
+
+class JobWorker:
+    """Owns one background thread that atomically claims and runs jobs.
+
+    Not thread-safe against multiple workers sharing one DB in the naive
+    sense — the atomic claim (``UPDATE ... WHERE status='pending'`` with
+    rowcount check) is safe against concurrent claimers, so multiple
+    JobWorker instances against the same DB would compete correctly.
+    Today we run one per process; production can add more without
+    schema changes.
+    """
+
+    def __init__(self, db_path: Path, poll_interval: float = WORKER_POLL_INTERVAL_SECONDS):
+        self.db_path = db_path
+        self.poll_interval = poll_interval
+        self._stop = threading.Event()
+        self._wake = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+
+    def start(self) -> None:
+        if self._thread is not None:
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(
+            target=self._loop, name="job-worker", daemon=True,
+        )
+        self._thread.start()
+        _log.info("Job worker started (db=%s, poll=%.1fs)", self.db_path, self.poll_interval)
+
+    def stop(self, timeout: float = 10.0) -> None:
+        """Signal the loop to exit. Waits up to ``timeout`` for the
+        current job to reach a checkpoint. A long-running scoring call
+        will run to completion (its own internal timeouts bound the
+        wall-time); the loop exits after that.
+        """
+        self._stop.set()
+        self._wake.set()
+        if self._thread is not None:
+            self._thread.join(timeout=timeout)
+            self._thread = None
+        _log.info("Job worker stopped")
+
+    def wake(self) -> None:
+        """Nudge the loop to skip its poll wait and check for work now.
+        Called from submit_job so a fresh job doesn't wait for the next
+        poll tick.
+        """
+        self._wake.set()
+
+    def _loop(self) -> None:
+        while not self._stop.is_set():
+            try:
+                ran = self._claim_and_run_one()
+            except Exception as e:
+                # Never let the loop die — a broken claim would silently
+                # leave the queue growing.
+                _log.exception("Job worker loop error: %s", e)
+                ran = False
+            if not ran:
+                # Idle wait — interrupted by wake() on new submissions.
+                self._wake.wait(self.poll_interval)
+                self._wake.clear()
+
+    def _claim_and_run_one(self) -> bool:
+        """Try to claim ONE pending job. Returns True if a job was
+        claimed and run (regardless of outcome), False if the queue
+        was empty. Atomic-claim pattern: UPDATE ... WHERE id=? AND
+        status='pending', check rowcount.
+        """
+        conn = db_connect(self.db_path)
+        job = None
+        try:
+            candidate = conn.execute(
+                """SELECT id, kind, payload, attempts, max_attempts
+                   FROM job_queue
+                   WHERE status = 'pending'
+                   ORDER BY created_at ASC
+                   LIMIT 1"""
+            ).fetchone()
+            if not candidate:
+                return False
+            # Atomic claim. If another worker grabbed this row between
+            # our SELECT and UPDATE, rowcount is 0 and we skip.
+            cur = conn.execute(
+                """UPDATE job_queue
+                   SET status = 'running',
+                       started_at = ?,
+                       attempts = attempts + 1
+                   WHERE id = ? AND status = 'pending'""",
+                (_now_iso(), candidate["id"]),
+            )
+            conn.commit()
+            if cur.rowcount != 1:
+                # Lost the race.
+                return True
+            job = dict(candidate)
+            job["attempts"] = job["attempts"] + 1
+        finally:
+            conn.close()
+
+        if not job:
+            return False
+
+        # Run the job body. Every exception is caught + recorded — the
+        # loop must survive.
+        try:
+            payload = json.loads(job["payload"])
+            if job["kind"] == "score_observation":
+                _run_job(
+                    db_path=Path(payload["db_path"]),
+                    observation_id=payload["observation_id"],
+                    video_path=Path(payload["video_path"]),
+                    rubric_id=payload["rubric_id"],
+                    whisper_model=payload.get("whisper_model", "medium"),
+                    frame_interval=float(payload.get("frame_interval", 60.0)),
+                )
+            else:
+                raise RuntimeError(f"Unknown job kind: {job['kind']!r}")
+            # Success.
+            conn = db_connect(self.db_path)
+            try:
+                conn.execute(
+                    """UPDATE job_queue
+                       SET status = 'complete', finished_at = ?
+                       WHERE id = ?""",
+                    (_now_iso(), job["id"]),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception as e:
+            # Retry or fail. Note attempts already incremented above.
+            _log.exception("Job %s failed on attempt %d: %s",
+                           job["id"][:8], job["attempts"], e)
+            err = f"{type(e).__name__}: {e}"[:2000]
+            conn = db_connect(self.db_path)
+            try:
+                if job["attempts"] >= job["max_attempts"]:
+                    conn.execute(
+                        """UPDATE job_queue
+                           SET status = 'failed', finished_at = ?, last_error = ?
+                           WHERE id = ?""",
+                        (_now_iso(), err, job["id"]),
+                    )
+                else:
+                    # Back to pending for retry. The observation's own
+                    # status was set to 'failed' by _run_job's except
+                    # block; the next attempt will re-flip it through
+                    # 'transcribing' → 'scoring' → 'complete'.
+                    conn.execute(
+                        """UPDATE job_queue
+                           SET status = 'pending', started_at = NULL, last_error = ?
+                           WHERE id = ?""",
+                        (err, job["id"]),
+                    )
+                conn.commit()
+            finally:
+                conn.close()
+        return True
+
+
+def start_worker(db_path: Path) -> JobWorker:
+    """Idempotent starter for app._bootstrap."""
+    global _worker_singleton
+    if _worker_singleton is None:
+        _worker_singleton = JobWorker(db_path)
+        _worker_singleton.start()
+    return _worker_singleton
+
+
+def stop_worker() -> None:
+    global _worker_singleton
+    if _worker_singleton is not None:
+        _worker_singleton.stop()
+        _worker_singleton = None
 
 
 def _run_job(
