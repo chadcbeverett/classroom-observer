@@ -51,7 +51,14 @@ CREATE TABLE IF NOT EXISTS users (
     email               TEXT NOT NULL,
     name                TEXT NOT NULL,
     role                TEXT NOT NULL
-        CHECK (role IN ('admin', 'coach', 'teacher_self_serve', 'viewer')),
+        -- 'teacher_self_serve' was the historical spelling for a teacher user
+        -- account (as opposed to a teacher record in the `teachers` table).
+        -- The app-layer role literal is 'teacher' throughout — every
+        -- ``viewer["role"] == "teacher"`` gate in app/main.py assumes that.
+        -- Both are permitted here so old rows keep working and new writes
+        -- can standardize on 'teacher'. Fresh DBs write 'teacher'; existing
+        -- DBs' CHECK gets widened by the migration in _apply_additive_migrations.
+        CHECK (role IN ('admin', 'coach', 'teacher', 'teacher_self_serve', 'viewer')),
     auth_provider       TEXT NOT NULL DEFAULT 'email'
         CHECK (auth_provider IN ('email', 'google', 'microsoft', 'district_sso')),
     auth_provider_id    TEXT,
@@ -152,6 +159,11 @@ CREATE TABLE IF NOT EXISTS observations (
     frame_count             INTEGER,
     frame_interval_s        REAL,
     status                  TEXT NOT NULL DEFAULT 'pending'
+        -- NOTE: 'deleted' is legacy — no code writes it. Soft-delete uses the
+        -- `deleted_at` timestamp column below. The enum value is preserved
+        -- here (removing it would require a table rebuild) but it is orphaned.
+        -- Any aggregate that cares about soft-delete filters on
+        -- `deleted_at IS NULL`, not on `status <> 'deleted'`.
         CHECK (status IN ('pending', 'transcribing', 'scoring', 'complete', 'failed', 'deleted')),
     failure_reason          TEXT,
     observed_at             TEXT,
@@ -456,7 +468,10 @@ CREATE TABLE IF NOT EXISTS lesson_plan_comments (
     plan_version_number INTEGER NOT NULL,
     author_user_id      TEXT NOT NULL REFERENCES users(id),
     author_role         TEXT NOT NULL
-        CHECK (author_role IN ('teacher_self_serve', 'coach', 'admin')),
+        -- See users.role note above: app writes 'teacher', historical schema
+        -- used 'teacher_self_serve'. Both permitted so the write at
+        -- app/main.py post_lesson_plan_comment doesn't hit a CHECK 500.
+        CHECK (author_role IN ('teacher', 'teacher_self_serve', 'coach', 'admin')),
     body                TEXT NOT NULL,
     created_at          TEXT NOT NULL
 );

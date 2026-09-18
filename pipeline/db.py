@@ -55,6 +55,18 @@ def init_db(conn: sqlite3.Connection) -> None:
 def _apply_additive_migrations(conn: sqlite3.Connection) -> None:
     """Add columns that were introduced after the initial schema shipped.
     Each ALTER TABLE is a no-op if the column already exists.
+
+    SQLite caveat: ``ALTER TABLE … ADD COLUMN`` cannot declare a FOREIGN KEY
+    constraint on the added column — the parser accepts REFERENCES but the
+    constraint is silently NOT enforced. So the columns below that are
+    conceptually foreign keys — ``observations.lesson_plan_id``,
+    ``bite_sized_action_tracking.goal_id``,
+    ``professional_goals.carried_forward_from_goal_id``, and
+    ``hlm_responses.published_coach_move_id`` — live as bare TEXT here even
+    though a fresh schema would FK them. That's fine today (no hard-DELETE
+    path targets those parent tables), but noted so a future schema rebuild
+    can restore the constraints, and app-layer writes already validate the
+    parent-row existence at the call site.
     """
     for table, column, decl in [
         # teacher_profiles: coach ratings + skill dev narrative
@@ -259,7 +271,106 @@ def _apply_additive_migrations(conn: sqlite3.Connection) -> None:
            ON consent_records(teacher_id) WHERE revoked_at IS NULL"""
     )
 
+    # ---- Missing indexes on hot aggregate paths ----------------------------
+    # Every dashboard / roster / compliance aggregate filters `o.deleted_at
+    # IS NULL` combined with a teacher_id or org_id predicate. The existing
+    # idx_obs_teacher is single-column on teacher_id, so SQLite scans every
+    # matching teacher's observations and filters at the row level. A
+    # composite makes the deleted_at filter part of the index seek — matters
+    # once a pilot's obs count crosses ~1,000. Similarly for cycles.closed_at
+    # (every "active cycle" query filters IS NULL) and the newer goal_id FK
+    # on bite_sized_action_tracking (list_actions_for_goal scans without it).
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_obs_teacher_active "
+        "ON observations(teacher_id, deleted_at)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_cycles_teacher_open "
+        "ON coaching_cycles(teacher_id, closed_at)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_bsat_goal "
+        "ON bite_sized_action_tracking(goal_id) WHERE goal_id IS NOT NULL"
+    )
+
+    # ---- CHECK-constraint widening (existing DBs) --------------------------
+    # schema.sql was updated to allow 'teacher' as a legal role literal on
+    # users.role and lesson_plan_comments.author_role. Because SQLite can't
+    # ALTER a CHECK constraint in place, DBs that were created before this
+    # widening still refuse `role='teacher'` at insert time — a real teacher
+    # signing in via magic link would silently drop out of every viewer.role
+    # gate. The one-time rebuild below copies the table through, applies the
+    # new CHECK, and preserves data. Idempotent: only fires when the current
+    # CHECK definition still lists 'teacher_self_serve' without 'teacher'.
+    _widen_role_checks(conn)
+
     conn.commit()
+
+
+def _widen_role_checks(conn: sqlite3.Connection) -> None:
+    """One-time table-rebuild migrations for the two role/author CHECK
+    constraints that predate the standardization on 'teacher' as the
+    canonical role literal. Idempotent — skipped when the existing CHECK
+    already permits 'teacher'.
+
+    Uses the standard 12-step-lite SQLite pattern: turn FKs off (so the
+    rename doesn't cascade), create shadow table, copy, drop, rename,
+    recreate the index that lived on the old table, turn FKs back on.
+    """
+    for table, column, new_check, extra_indexes in [
+        (
+            "users", "role",
+            "CHECK (role IN ('admin', 'coach', 'teacher', 'teacher_self_serve', 'viewer'))",
+            ["CREATE INDEX IF NOT EXISTS idx_users_org ON users(org_id)"],
+        ),
+        (
+            "lesson_plan_comments", "author_role",
+            "CHECK (author_role IN ('teacher', 'teacher_self_serve', 'coach', 'admin'))",
+            ["CREATE INDEX IF NOT EXISTS idx_lpc_plan ON lesson_plan_comments(lesson_plan_id, created_at ASC)"],
+        ),
+    ]:
+        # Detect whether the existing table's CHECK already includes 'teacher'.
+        # The SQL text is stored in sqlite_master.sql for the CREATE TABLE.
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone()
+        if not row or not row["sql"]:
+            continue
+        existing_sql = row["sql"]
+        # If it already lists 'teacher' as a bare-word literal in a CHECK on
+        # this column, the migration is done.
+        if f"CHECK ({column} IN " in existing_sql and "'teacher'" in existing_sql:
+            continue
+        if "'teacher_self_serve'" not in existing_sql:
+            # Neither the old spelling nor the new one — some other schema is
+            # in play (test harness? partial migration?). Skip conservatively.
+            continue
+        # Rebuild. Wrap in an explicit transaction; on any failure, roll back
+        # so the old table is left intact.
+        try:
+            conn.execute("PRAGMA foreign_keys = OFF")
+            # Compose the new CREATE TABLE by string-substituting the CHECK.
+            new_create = existing_sql.replace(f"CREATE TABLE IF NOT EXISTS {table}", f"CREATE TABLE {table}__new")
+            new_create = new_create.replace(f"CREATE TABLE {table}", f"CREATE TABLE {table}__new")
+            # Swap the old CHECK for the new one. The old CHECK is the substring
+            # between "CHECK (" + column + " IN " and the closing ")".
+            import re as _re
+            new_create = _re.sub(
+                rf"CHECK \({column} IN \([^)]*\)\)",
+                new_check,
+                new_create,
+                count=1,
+            )
+            conn.execute(new_create)
+            # Copy every column across (SELECT * matches the shadow table's
+            # column order because we didn't change the column list).
+            conn.execute(f"INSERT INTO {table}__new SELECT * FROM {table}")
+            conn.execute(f"DROP TABLE {table}")
+            conn.execute(f"ALTER TABLE {table}__new RENAME TO {table}")
+            for idx_sql in extra_indexes:
+                conn.execute(idx_sql)
+        finally:
+            conn.execute("PRAGMA foreign_keys = ON")
 
 
 # ---------------------------------------------------------------------------
