@@ -179,6 +179,86 @@ def _apply_additive_migrations(conn: sqlite3.Connection) -> None:
         """CREATE UNIQUE INDEX IF NOT EXISTS uq_teachers_org_employee_id
            ON teachers(org_id, employee_id) WHERE employee_id IS NOT NULL"""
     )
+
+    # ---- Auth substrate: real sign-in replaces the cookie-switch personas ----
+    #
+    # Magic-link flow: user enters email, we mint a short-lived signed token
+    # bound to their (org, email), email them the URL, they click, we consume
+    # the token and mint a session. Sessions are the durable side; tokens are
+    # single-use. Both live in the app DB so a session survives an app restart
+    # and a token can be revoked by row.
+    #
+    # No passwords are stored — the token IS the auth factor, and it lives
+    # long enough to click through an email but not to be leaked-and-replayed.
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS auth_sessions (
+            id                  TEXT PRIMARY KEY,   -- session token (goes in the cookie)
+            user_id             TEXT NOT NULL REFERENCES users(id),
+            created_at          TEXT NOT NULL,
+            last_seen_at        TEXT NOT NULL,
+            expires_at          TEXT NOT NULL,
+            ip                  TEXT,               -- best-effort, may be a proxy hop
+            user_agent          TEXT,
+            revoked_at          TEXT                -- explicit sign-out or admin revoke
+        )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id, expires_at)"
+    )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS magic_link_tokens (
+            id                  TEXT PRIMARY KEY,   -- the token itself (URL-safe)
+            email               TEXT NOT NULL,      -- what was typed at /signin
+            user_id             TEXT REFERENCES users(id),  -- resolved if the email matches
+            purpose             TEXT NOT NULL DEFAULT 'signin'
+                CHECK (purpose IN ('signin', 'invite')),
+            next_url            TEXT,               -- where to land after sign-in (same-origin)
+            created_at          TEXT NOT NULL,
+            expires_at          TEXT NOT NULL,      -- default: created_at + 15 minutes
+            consumed_at         TEXT,               -- set on successful click
+            consumed_session_id TEXT REFERENCES auth_sessions(id),
+            ip                  TEXT                -- from the /signin POST
+        )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_magic_link_email ON magic_link_tokens(email, created_at DESC)"
+    )
+    # Outbound mail: everything we would email lands here first. In dev/pilot
+    # this IS the delivery channel (a dev page reads unopened rows and shows
+    # the link); in production an SMTP sender daemon pumps unsent rows out.
+    # Separating "write intent to send" from "actually send" gives a clean
+    # audit trail and lets us re-send by clearing sent_at.
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS outbound_mail (
+            id                  TEXT PRIMARY KEY,
+            to_email            TEXT NOT NULL,
+            subject             TEXT NOT NULL,
+            body_text           TEXT NOT NULL,
+            body_html           TEXT,
+            created_at          TEXT NOT NULL,
+            sent_at             TEXT,               -- set by the SMTP sender when it lands
+            failed_at           TEXT,
+            failure_reason      TEXT,
+            related_token_id    TEXT REFERENCES magic_link_tokens(id)
+        )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_outbound_mail_unsent ON outbound_mail(sent_at, created_at)"
+    )
+
+    # ---- Consent: the schema table exists; add the audit column for who
+    # electronically signed. Also ensure the "one active consent per teacher"
+    # invariant via partial-unique index — matches the "org-level, revocable"
+    # policy we agreed on. (A single_observation-scoped row would need its own
+    # observation_id column; leave for later.)
+    _cr_cols = {row["name"] for row in conn.execute("PRAGMA table_info(consent_records)").fetchall()}
+    if "granted_by_user_id" not in _cr_cols:
+        conn.execute("ALTER TABLE consent_records ADD COLUMN granted_by_user_id TEXT REFERENCES users(id)")
+    conn.execute(
+        """CREATE UNIQUE INDEX IF NOT EXISTS uq_one_active_consent_per_teacher
+           ON consent_records(teacher_id) WHERE revoked_at IS NULL"""
+    )
+
     conn.commit()
 
 
@@ -1188,6 +1268,302 @@ def restore_observation(conn: sqlite3.Connection, *, observation_id: str) -> Non
         (observation_id,),
     )
     conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# Auth: sessions, magic-link tokens, outbound mail
+#
+# Magic-link flow the routes use:
+#   1. /signin POST → create_magic_link_token(email, next_url)
+#      → queue_email(magic_link_email(...))
+#   2. /auth/{token} GET → consume_magic_link_token(token) returns user_id
+#      → create_session(user_id) returns session_id
+#      → set HttpOnly cookie, redirect to next_url
+#   3. Any request → get_session(cookie) returns user_id + role + org
+#      → renews last_seen_at on read
+#   4. /signout POST → revoke_session(cookie)
+# ---------------------------------------------------------------------------
+
+
+import secrets as _secrets
+from datetime import timedelta as _tdelta
+
+
+SESSION_TTL_DAYS = 30            # cookie survives a month idle
+MAGIC_LINK_TTL_MINUTES = 15      # short — clicking-through-email doesn't need longer
+SESSION_RENEW_AFTER_MIN = 5      # only rewrite last_seen_at every N min (write reduction)
+
+
+def _new_token(nbytes: int = 32) -> str:
+    """URL-safe random token. 32 bytes → 43-char base64url string. Used for
+    both session ids and magic-link tokens; enough entropy that guessing is
+    strictly worse than compromising the cookie transport.
+    """
+    return _secrets.token_urlsafe(nbytes)
+
+
+def create_magic_link_token(
+    conn: sqlite3.Connection, *, email: str, next_url: Optional[str] = None,
+    ip: Optional[str] = None, purpose: str = "signin",
+) -> tuple[str, Optional[str]]:
+    """Mint a single-use magic-link token for the given email.
+
+    Returns ``(token, user_id_or_None)``. ``user_id`` is resolved when the
+    email matches an existing user, otherwise None — the token is still
+    minted (so we don't leak "this email is / is not registered"), and the
+    /auth/{token} route later refuses to sign in unknown emails.
+    """
+    row = conn.execute("SELECT id FROM users WHERE lower(email) = lower(?)", (email,)).fetchone()
+    user_id = row["id"] if row else None
+    token = _new_token()
+    now = _now_iso()
+    expires = (datetime.now(timezone.utc) + _tdelta(minutes=MAGIC_LINK_TTL_MINUTES)).isoformat()
+    conn.execute(
+        """INSERT INTO magic_link_tokens
+             (id, email, user_id, purpose, next_url, created_at, expires_at, ip)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (token, email.strip().lower(), user_id, purpose, next_url, now, expires, ip),
+    )
+    conn.commit()
+    return token, user_id
+
+
+def consume_magic_link_token(
+    conn: sqlite3.Connection, *, token: str
+) -> Optional[dict]:
+    """Verify a magic-link token and mark it consumed.
+
+    Returns ``{"user_id": ..., "next_url": ..., "email": ...}`` on success;
+    ``None`` when the token is unknown, expired, already consumed, or bound
+    to no user (a magic link for an email that doesn't have an account).
+    Consumption is atomic — a race between two clicks lands one on ``None``.
+    """
+    now_dt = datetime.now(timezone.utc)
+    row = conn.execute(
+        """SELECT id, email, user_id, next_url, expires_at, consumed_at
+           FROM magic_link_tokens WHERE id = ?""",
+        (token,),
+    ).fetchone()
+    if not row:
+        return None
+    if row["consumed_at"] is not None:
+        return None
+    try:
+        exp = datetime.fromisoformat(row["expires_at"].replace("Z", "+00:00"))
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+    except Exception:
+        return None
+    if exp < now_dt:
+        return None
+    if not row["user_id"]:
+        # Unknown email — mark consumed so a leaked token can't be reused;
+        # returning None makes the route show a generic "check the link" error.
+        conn.execute(
+            "UPDATE magic_link_tokens SET consumed_at = ? WHERE id = ?",
+            (_now_iso(), token),
+        )
+        conn.commit()
+        return None
+    # Atomic consume: UPDATE ... WHERE consumed_at IS NULL, check rowcount.
+    cur = conn.execute(
+        "UPDATE magic_link_tokens SET consumed_at = ? WHERE id = ? AND consumed_at IS NULL",
+        (_now_iso(), token),
+    )
+    conn.commit()
+    if cur.rowcount != 1:
+        # Lost the race to a concurrent click.
+        return None
+    return {
+        "user_id": row["user_id"],
+        "next_url": row["next_url"],
+        "email": row["email"],
+    }
+
+
+def create_session(
+    conn: sqlite3.Connection, *, user_id: str, ip: Optional[str] = None,
+    user_agent: Optional[str] = None, magic_link_token_id: Optional[str] = None,
+) -> str:
+    """Mint a session for the given user_id. Returns the session token (goes
+    in the HttpOnly cookie). Expires SESSION_TTL_DAYS out.
+    """
+    sid = _new_token()
+    now = _now_iso()
+    expires = (datetime.now(timezone.utc) + _tdelta(days=SESSION_TTL_DAYS)).isoformat()
+    conn.execute(
+        """INSERT INTO auth_sessions
+             (id, user_id, created_at, last_seen_at, expires_at, ip, user_agent)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (sid, user_id, now, now, expires, ip, user_agent),
+    )
+    if magic_link_token_id:
+        conn.execute(
+            "UPDATE magic_link_tokens SET consumed_session_id = ? WHERE id = ?",
+            (sid, magic_link_token_id),
+        )
+    conn.commit()
+    return sid
+
+
+def get_session(conn: sqlite3.Connection, *, session_id: str) -> Optional[dict]:
+    """Look up a session by token. Returns the user record joined with
+    org info when the session is valid; None when unknown, revoked, or
+    expired. Renews ``last_seen_at`` (throttled to avoid a write on every
+    request).
+    """
+    if not session_id:
+        return None
+    row = conn.execute(
+        """SELECT s.id AS session_id, s.user_id, s.expires_at, s.revoked_at, s.last_seen_at,
+                  u.email, u.name, u.role, u.org_id,
+                  o.name AS org_name, o.slug AS org_slug
+           FROM auth_sessions s
+           JOIN users u ON u.id = s.user_id
+           LEFT JOIN organizations o ON o.id = u.org_id
+           WHERE s.id = ?""",
+        (session_id,),
+    ).fetchone()
+    if not row:
+        return None
+    if row["revoked_at"]:
+        return None
+    now_dt = datetime.now(timezone.utc)
+    try:
+        exp = datetime.fromisoformat(row["expires_at"].replace("Z", "+00:00"))
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+    except Exception:
+        return None
+    if exp < now_dt:
+        return None
+    # Throttled renewal — only rewrite last_seen_at every SESSION_RENEW_AFTER_MIN.
+    try:
+        last = datetime.fromisoformat(row["last_seen_at"].replace("Z", "+00:00"))
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=timezone.utc)
+        if (now_dt - last).total_seconds() > SESSION_RENEW_AFTER_MIN * 60:
+            conn.execute(
+                "UPDATE auth_sessions SET last_seen_at = ? WHERE id = ?",
+                (_now_iso(), session_id),
+            )
+            conn.commit()
+    except Exception:
+        pass
+    return {
+        "session_id": row["session_id"],
+        "user_id": row["user_id"],
+        "email": row["email"],
+        "name": row["name"],
+        "role": row["role"],
+        "org_id": row["org_id"],
+        "org_name": row["org_name"],
+        "org_slug": row["org_slug"],
+    }
+
+
+def revoke_session(conn: sqlite3.Connection, *, session_id: str) -> None:
+    """Explicit sign-out. Marks revoked; a later get_session returns None."""
+    if not session_id:
+        return
+    conn.execute(
+        "UPDATE auth_sessions SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL",
+        (_now_iso(), session_id),
+    )
+    conn.commit()
+
+
+def queue_email(
+    conn: sqlite3.Connection, *, to_email: str, subject: str,
+    body_text: str, body_html: Optional[str] = None,
+    related_token_id: Optional[str] = None,
+) -> str:
+    """Write an email into outbound_mail. In pilot this is the delivery
+    channel — the dev viewer or a coach's inbox reads from the row. In
+    production a sender daemon pulls unsent rows and pumps them out.
+
+    Returns the mail id.
+    """
+    mid = _new_id()
+    conn.execute(
+        """INSERT INTO outbound_mail
+             (id, to_email, subject, body_text, body_html, created_at, related_token_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (mid, to_email.strip().lower(), subject, body_text, body_html, _now_iso(), related_token_id),
+    )
+    conn.commit()
+    return mid
+
+
+def list_recent_outbound_mail(conn: sqlite3.Connection, *, limit: int = 20) -> list:
+    """Dev-view helper: recent outbound mail, latest first."""
+    rows = conn.execute(
+        "SELECT * FROM outbound_mail ORDER BY created_at DESC LIMIT ?", (limit,)
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Consent — grant / revoke / lookup.
+#
+# Policy (agreed with coach): one-time org-level consent, revocation blocks
+# future observations but keeps history in place. The schema also supports
+# per-observation scoping; not used yet.
+# ---------------------------------------------------------------------------
+
+
+def get_active_consent(
+    conn: sqlite3.Connection, *, teacher_id: str
+) -> Optional[dict]:
+    """Return the active (non-revoked) consent for this teacher, or None
+    if none exists. The partial-unique index enforces at most one.
+    """
+    row = conn.execute(
+        """SELECT * FROM consent_records
+           WHERE teacher_id = ? AND revoked_at IS NULL
+           ORDER BY consented_at DESC LIMIT 1""",
+        (teacher_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def grant_consent(
+    conn: sqlite3.Connection, *, org_id: str, teacher_id: str,
+    granted_by_user_id: str, form_version: str = "2026-09-v1",
+    scope: str = "perpetual_until_revoked",
+) -> str:
+    """Record consent. Idempotent: if there's already an active consent for
+    this teacher, returns its id without inserting a duplicate.
+    """
+    existing = get_active_consent(conn, teacher_id=teacher_id)
+    if existing:
+        return existing["id"]
+    cid = _new_id()
+    conn.execute(
+        """INSERT INTO consent_records
+             (id, org_id, teacher_id, scope, form_version, method,
+              consented_at, granted_by_user_id)
+           VALUES (?, ?, ?, ?, ?, 'electronic_signature', ?, ?)""",
+        (cid, org_id, teacher_id, scope, form_version, _now_iso(), granted_by_user_id),
+    )
+    conn.commit()
+    return cid
+
+
+def revoke_consent(
+    conn: sqlite3.Connection, *, teacher_id: str
+) -> bool:
+    """Revoke the active consent for this teacher. Returns True if a row was
+    revoked, False if there was nothing active. Historical observations stay
+    in place — retention policy governs purge, not consent.
+    """
+    cur = conn.execute(
+        """UPDATE consent_records SET revoked_at = ?
+           WHERE teacher_id = ? AND revoked_at IS NULL""",
+        (_now_iso(), teacher_id),
+    )
+    conn.commit()
+    return cur.rowcount > 0
 
 
 def record_bite_sized_action(

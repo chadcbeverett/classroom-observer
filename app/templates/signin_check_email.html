@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Check your email · Classroom Observer{% endblock %}
+{% block content %}
+
+<div style="max-width: 480px; margin: 60px auto 0;">
+  <h1>Check your email</h1>
+  <p>We sent a one-click sign-in link to <strong>{{ email }}</strong>.</p>
+  <p class="muted">The link works for 15 minutes. If it's not there in a minute, check spam, or come back and ask for another.</p>
+
+  {% if DEV_LOGIN_ENABLED %}
+  <div class="card" style="margin-top: 20px; background:#fafafa;">
+    <p class="muted small" style="margin: 0;">
+      Dev: the link is in <a href="/dev/mail">the outbound-mail viewer</a>.
+    </p>
+  </div>
+  {% endif %}
+
+  <p style="margin-top: 24px;"><a class="button-link secondary" href="/signin">← Back</a></p>
+</div>
+
+{% endblock %}

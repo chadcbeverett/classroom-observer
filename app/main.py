@@ -60,6 +60,11 @@ from pipeline.db import (
     archive_teacher, restore_teacher,
     archive_observation, restore_observation,
     delete_private_note,
+    create_magic_link_token, consume_magic_link_token,
+    create_session, get_session, revoke_session,
+    queue_email, list_recent_outbound_mail,
+    get_active_consent, grant_consent, revoke_consent,
+    SESSION_TTL_DAYS, MAGIC_LINK_TTL_MINUTES,
 )
 from pipeline.gbf import STEPS as GBF_STEPS, STEPS_BY_ID as GBF_STEPS_BY_ID, all_steps_by_phase
 from pipeline.rubric import DEFAULT_RUBRIC_ID, RUBRICS, get_rubric
@@ -269,6 +274,24 @@ TEMPLATES.env.globals["cycle_progress"] = _cycle_progress
 # with a signed session and back it with a users table lookup.
 
 VIEWER_COOKIE = "viewer"
+SESSION_COOKIE = "cobs_session"
+
+# Dev-only bypass: when OBSERVER_DEV_LOGIN=1, the legacy persona-switcher
+# cookie still works (coach / principal / district / teacher:<id>). This
+# lets me smoke-test the four surfaces without going through email. In a
+# real deploy the env var is unset and the persona cookie is ignored.
+DEV_LOGIN_ENABLED = os.environ.get("OBSERVER_DEV_LOGIN", "").strip() == "1"
+
+
+def _base_url_for_email(request: Request) -> str:
+    """Origin (scheme://host) to use in magic-link URLs sent by email.
+    Prefers OBSERVER_PUBLIC_URL when set (production behind a proxy), falls
+    back to the request's own scheme/host (dev + local pilot).
+    """
+    override = os.environ.get("OBSERVER_PUBLIC_URL", "").strip()
+    if override:
+        return override.rstrip("/")
+    return f"{request.url.scheme}://{request.url.netloc}"
 
 
 def _next_obs_due(conn, teacher_id: str, days_between_target: Optional[int]) -> Optional[dict]:
@@ -304,26 +327,199 @@ def _next_obs_due(conn, teacher_id: str, days_between_target: Optional[int]) -> 
 
 
 def _current_viewer(request: Request) -> dict:
-    """Return one of:
-      {'role': 'coach'}
-      {'role': 'principal'}
-      {'role': 'district'}
-      {'role': 'teacher', 'teacher_id': <uuid>}
+    """Return the viewer record for this request, or an anonymous viewer.
+
+    Priority:
+      1. Real session cookie (SESSION_COOKIE) — the primary auth path. When
+         valid, returns a full viewer with user_id / org_id / email plus the
+         legacy 'role' key that every downstream check reads.
+      2. Legacy persona cookie (VIEWER_COOKIE) — ONLY honored when the env
+         var OBSERVER_DEV_LOGIN=1 is set. Lets me keep smoke-testing the four
+         surfaces without going through email; off in production.
+      3. Anonymous — {'role': 'anon'}. Every gated route sends this to /signin.
+
+    Viewer keys:
+      role: 'coach' | 'principal' | 'district' | 'teacher' | 'anon'
+      user_id / email / name / org_id: present when signed in via session
+      teacher_id: present for role='teacher' (the teacher's own record)
     """
-    raw = request.cookies.get(VIEWER_COOKIE) or "coach"
-    if raw == "principal":
-        return {"role": "principal"}
-    if raw == "district":
-        return {"role": "district"}
-    if raw.startswith("teacher:"):
-        return {"role": "teacher", "teacher_id": raw.split(":", 1)[1]}
-    return {"role": "coach"}
+    sid = request.cookies.get(SESSION_COOKIE)
+    if sid:
+        conn = db_connect(DB_PATH)
+        try:
+            sess = get_session(conn, session_id=sid)
+        finally:
+            conn.close()
+        if sess:
+            v = {
+                "role": sess["role"],
+                "user_id": sess["user_id"],
+                "email": sess["email"],
+                "name": sess["name"],
+                "org_id": sess["org_id"],
+                "session_id": sess["session_id"],
+                "authed_via": "session",
+            }
+            # A teacher-role user's teacher_id is looked up by user_id → teacher
+            # (the user IS a teacher; the teacher row's own id is what routes
+            # gate on). Cached inside the request-scoped viewer to avoid re-hits.
+            if sess["role"] == "teacher":
+                conn = db_connect(DB_PATH)
+                try:
+                    tr = conn.execute(
+                        "SELECT id FROM teachers WHERE assigned_coach_user_id IS NOT NULL AND email = ?",
+                        (sess["email"],),
+                    ).fetchone() or conn.execute(
+                        "SELECT id FROM teachers WHERE email = ?", (sess["email"],)
+                    ).fetchone()
+                    if tr:
+                        v["teacher_id"] = tr["id"]
+                finally:
+                    conn.close()
+            return v
+
+    if DEV_LOGIN_ENABLED:
+        raw = request.cookies.get(VIEWER_COOKIE)
+        if raw == "principal":
+            return {"role": "principal", "authed_via": "dev", "org_id": _SEEDED_IDS.get("org_id"), "user_id": _SEEDED_IDS.get("user_id")}
+        if raw == "district":
+            return {"role": "district", "authed_via": "dev", "org_id": _SEEDED_IDS.get("org_id"), "user_id": _SEEDED_IDS.get("user_id")}
+        if raw and raw.startswith("teacher:"):
+            return {"role": "teacher", "teacher_id": raw.split(":", 1)[1], "authed_via": "dev", "org_id": _SEEDED_IDS.get("org_id")}
+        if raw == "coach" or raw is None:
+            return {"role": "coach", "authed_via": "dev", "org_id": _SEEDED_IDS.get("org_id"), "user_id": _SEEDED_IDS.get("user_id")}
+
+    return {"role": "anon"}
+
+
+# Paths that must remain reachable to an anon viewer — the auth surface
+# itself, static assets, and the observation-status polling endpoint that
+# the upload page hits before the session cookie exists.
+_ANON_ALLOWED_PREFIXES = (
+    "/signin", "/signout", "/auth/", "/static/", "/favicon", "/dev/mail",
+)
+
+
+def _require_signed_in(request: Request, viewer: dict) -> Optional[RedirectResponse]:
+    """Called at the top of any gated route. Returns a RedirectResponse to
+    /signin?next=<current path> when the viewer is anon; None when signed in.
+    """
+    if viewer.get("role") != "anon":
+        return None
+    from urllib.parse import quote
+    next_path = request.url.path
+    if request.url.query:
+        next_path += "?" + request.url.query
+    return RedirectResponse(url=f"/signin?next={quote(next_path, safe='/?=&')}", status_code=303)
 
 
 def _viewer_can_edit_teacher(viewer: dict, teacher_id: str) -> bool:
-    if viewer["role"] == "coach":
+    """Legacy gate — coach may edit any teacher on their caseload, teacher
+    may only edit their own. Kept for compatibility; new code should call
+    :func:`_require_teacher_access`.
+    """
+    if viewer["role"] in ("coach", "principal", "district"):
         return True
     return viewer.get("teacher_id") == teacher_id
+
+
+def _teacher_on_coach_caseload(conn, *, teacher_id: str, coach_user_id: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM teachers WHERE id = ? AND assigned_coach_user_id = ?",
+        (teacher_id, coach_user_id),
+    ).fetchone()
+    return row is not None
+
+
+def _teacher_in_org(conn, *, teacher_id: str, org_id: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM teachers WHERE id = ? AND org_id = ?", (teacher_id, org_id),
+    ).fetchone()
+    return row is not None
+
+
+def _require_teacher_access(viewer: dict, teacher_id: str, action: str = "This action") -> None:
+    """Refuse the request when the viewer has no legitimate relationship to
+    this teacher. Rules:
+      coach     — teacher must be on their caseload
+      principal — teacher must be in their org
+      district  — teacher must be in an org they administer (today: any org)
+      teacher   — teacher_id must be their own
+
+    Raises HTTPException(403) on mismatch. Anonymous viewers should have
+    been redirected upstream by ``_require_signed_in``.
+    """
+    role = viewer.get("role")
+    if role == "anon":
+        raise HTTPException(401, f"{action} needs a sign-in")
+    if role == "teacher":
+        if viewer.get("teacher_id") != teacher_id:
+            raise HTTPException(403, "Not authorized to access this teacher")
+        return
+    if role == "district":
+        return  # district can reach any teacher (revisit when districts are separately administered)
+    conn = db_connect(DB_PATH)
+    try:
+        if role == "coach":
+            uid = viewer.get("user_id")
+            if not uid or not _teacher_on_coach_caseload(conn, teacher_id=teacher_id, coach_user_id=uid):
+                raise HTTPException(403, "Not authorized to access this teacher")
+            return
+        if role == "principal":
+            oid = viewer.get("org_id")
+            if not oid or not _teacher_in_org(conn, teacher_id=teacher_id, org_id=oid):
+                raise HTTPException(403, "Not authorized to access this teacher")
+            return
+    finally:
+        conn.close()
+    raise HTTPException(403, f"{action} refused for role {role!r}")
+
+
+def _guard_teacher_write(request: Request, teacher_id: str, action: str = "Write") -> dict:
+    """One-liner used at the top of every teacher-scoped write route.
+
+    - Refuses anon (should already be redirected upstream by middleware, but
+      belt-and-suspenders for direct POSTs).
+    - Enforces cross-teacher URL-forge protection: coach must own this
+      teacher, principal must be in the same org, teacher-role viewers may
+      only write their own.
+
+    Returns the viewer dict so the caller can read role/user_id without
+    calling ``_current_viewer`` again.
+    """
+    viewer = _current_viewer(request)
+    if viewer.get("role") == "anon":
+        raise HTTPException(401, f"{action} needs a sign-in")
+    _require_teacher_access(viewer, teacher_id, action)
+    return viewer
+
+
+def _scope_filter(viewer: dict, *, teachers_alias: str = "t") -> tuple[str, list]:
+    """Return a SQL fragment + params that scopes a query to teachers the
+    viewer may see. Meant to be spliced into aggregate queries whose FROM
+    already joins ``teachers <teachers_alias>``.
+
+    Coach     → WHERE {t}.assigned_coach_user_id = ?
+    Principal → WHERE {t}.org_id = ?
+    District  → no filter (returns empty fragment)
+    Teacher   → WHERE {t}.id = ?
+    Anon      → WHERE 1=0  (should never render; anon is redirected upstream)
+
+    Callers combine with existing WHERE clauses via " AND " or start a WHERE
+    clause depending on their query shape. Use ``_where(prefix)`` below to
+    stitch cleanly.
+    """
+    role = viewer.get("role")
+    if role == "coach":
+        uid = viewer.get("user_id") or ""
+        return f"{teachers_alias}.assigned_coach_user_id = ?", [uid]
+    if role == "principal":
+        return f"{teachers_alias}.org_id = ?", [viewer.get("org_id") or ""]
+    if role == "teacher":
+        return f"{teachers_alias}.id = ?", [viewer.get("teacher_id") or ""]
+    if role == "district":
+        return "", []
+    return "1 = 0", []
 
 
 def _teacher_is_archived(conn, teacher_id: str) -> bool:
@@ -419,7 +615,22 @@ def _viewer_from_action(viewer: dict, conn, action_id: str) -> bool:
 # Make viewer available in every template automatically.
 @app.middleware("http")
 async def _inject_viewer(request: Request, call_next):
+    """Attach the viewer to every request, and gate anon requests to a
+    minimal allowlist. The allowlist keeps the auth surface itself, static
+    assets, and the dev mail viewer reachable without a session — everything
+    else redirects to /signin?next=<current path>.
+    """
     request.state.viewer = _current_viewer(request)
+    if request.state.viewer.get("role") == "anon":
+        path = request.url.path
+        if not any(path == p or path.startswith(p) for p in _ANON_ALLOWED_PREFIXES):
+            from urllib.parse import quote
+            nxt = path
+            if request.url.query:
+                nxt += "?" + request.url.query
+            return RedirectResponse(
+                url=f"/signin?next={quote(nxt, safe='/?=&')}", status_code=303,
+            )
     return await call_next(request)
 
 
@@ -440,6 +651,7 @@ def _avatar_idx(name: str) -> int:
 
 TEMPLATES.env.globals["avatar_idx"] = _avatar_idx
 TEMPLATES.env.globals["avatar_palette"] = ["blue", "teal", "amber", "plum", "green", "rose"]
+TEMPLATES.env.globals["DEV_LOGIN_ENABLED"] = DEV_LOGIN_ENABLED
 
 
 # ---------------------------------------------------------------------------
@@ -471,12 +683,19 @@ def dashboard_home(request: Request) -> HTMLResponse:
     from collections import Counter
 
     rubric = get_rubric(DEFAULT_RUBRIC_ID)
+    _dash_scope_sql, _dash_scope_params = _scope_filter(_viewer_home, teachers_alias="t")
+    _dash_scope_and = (" AND " + _dash_scope_sql) if _dash_scope_sql else ""
     conn = db_connect(DB_PATH)
     try:
-        # Observation counts (archived observations drop out of aggregates)
+        # Observation counts — scoped through a JOIN on teachers so the
+        # coach's dashboard reflects only their caseload's observations.
         obs_counts = {"total": 0, "in_flight": 0, "complete": 0, "failed": 0}
         for row in conn.execute(
-            "SELECT status, COUNT(*) AS c FROM observations WHERE deleted_at IS NULL GROUP BY status"
+            f"""SELECT o.status, COUNT(*) AS c
+               FROM observations o JOIN teachers t ON t.id = o.teacher_id
+               WHERE o.deleted_at IS NULL AND t.archived_at IS NULL{_dash_scope_and}
+               GROUP BY o.status""",
+            _dash_scope_params,
         ):
             obs_counts["total"] += row["c"]
             if row["status"] == "complete":
@@ -486,15 +705,23 @@ def dashboard_home(request: Request) -> HTMLResponse:
             else:
                 obs_counts["in_flight"] += row["c"]
 
-        # Teacher / cycle / goal counts
+        # Teacher / cycle / goal counts — all scoped to the viewer.
         teacher_count = conn.execute(
-            "SELECT COUNT(*) AS c FROM teachers WHERE archived_at IS NULL"
+            f"SELECT COUNT(*) AS c FROM teachers t WHERE t.archived_at IS NULL{_dash_scope_and}",
+            _dash_scope_params,
         ).fetchone()["c"]
         active_cycle_count = conn.execute(
-            "SELECT COUNT(*) AS c FROM coaching_cycles WHERE closed_at IS NULL"
+            f"""SELECT COUNT(*) AS c FROM coaching_cycles c
+               JOIN teachers t ON t.id = c.teacher_id
+               WHERE c.closed_at IS NULL AND t.archived_at IS NULL{_dash_scope_and}""",
+            _dash_scope_params,
         ).fetchone()["c"]
         active_goal_count = conn.execute(
-            "SELECT COUNT(*) AS c FROM professional_goals WHERE status IN ('proposed', 'active')"
+            f"""SELECT COUNT(*) AS c FROM professional_goals g
+               JOIN teachers t ON t.id = g.teacher_id
+               WHERE g.status IN ('proposed', 'active')
+                 AND t.archived_at IS NULL{_dash_scope_and}""",
+            _dash_scope_params,
         ).fetchone()["c"]
 
         # Bite-sized action implementation stats (across all)
@@ -530,14 +757,15 @@ def dashboard_home(request: Request) -> HTMLResponse:
                 if d in rating_counts and r:
                     rating_counts[d][r] += 1
 
-        # Recent observations (top 8)
+        # Recent observations (top 8) — coach's caseload only.
         recent_rows = conn.execute(
-            """SELECT o.id, o.video_filename, o.status, o.uploaded_at, o.scored_at,
+            f"""SELECT o.id, o.video_filename, o.status, o.uploaded_at, o.scored_at,
                       t.name AS teacher_name
                FROM observations o
                JOIN teachers t ON t.id = o.teacher_id
-               WHERE o.deleted_at IS NULL AND t.archived_at IS NULL
-               ORDER BY o.uploaded_at DESC LIMIT 8"""
+               WHERE o.deleted_at IS NULL AND t.archived_at IS NULL{_dash_scope_and}
+               ORDER BY o.uploaded_at DESC LIMIT 8""",
+            _dash_scope_params,
         ).fetchall()
 
         # Lesson plan status counts
@@ -563,86 +791,93 @@ def dashboard_home(request: Request) -> HTMLResponse:
         # Fire when: complete obs, past cadence, AND coach hasn't finished the
         # debrief work yet (either no debrief_focus OR no published coach move).
         attention_debriefs = [dict(r) for r in conn.execute(
-            """SELECT o.id AS obs_id, o.scored_at, t.id AS teacher_id, t.name AS teacher_name,
+            f"""SELECT o.id AS obs_id, o.scored_at, t.id AS teacher_id, t.name AS teacher_name,
                       (o.debrief_focus IS NULL OR o.debrief_focus = '') AS no_focus,
                       NOT EXISTS (SELECT 1 FROM published_coach_moves pcm
                                   WHERE pcm.observation_id = o.id AND pcm.superseded_at IS NULL) AS no_move
                FROM observations o JOIN teachers t ON t.id = o.teacher_id
                WHERE o.status = 'complete'
-                 AND o.deleted_at IS NULL AND t.archived_at IS NULL
+                 AND o.deleted_at IS NULL AND t.archived_at IS NULL{_dash_scope_and}
                  AND o.scored_at IS NOT NULL AND o.scored_at < ?
                  AND ((o.debrief_focus IS NULL OR o.debrief_focus = '')
                       OR NOT EXISTS (SELECT 1 FROM published_coach_moves pcm
                                      WHERE pcm.observation_id = o.id AND pcm.superseded_at IS NULL))
                ORDER BY o.scored_at DESC LIMIT 5""",
-            (_debrief_threshold,),
+            (*_dash_scope_params, _debrief_threshold),
         ).fetchall()]
 
         attention_actions = [dict(r) for r in conn.execute(
-            """SELECT ba.id AS action_id, ba.bite_sized_action_text, ba.created_at,
+            f"""SELECT ba.id AS action_id, ba.bite_sized_action_text, ba.created_at,
                       t.id AS teacher_id, t.name AS teacher_name,
                       ba.source_observation_id
                FROM bite_sized_action_tracking ba
                JOIN teachers t ON t.id = ba.teacher_id
                JOIN observations src ON src.id = ba.source_observation_id
                WHERE ba.implementation IS NULL AND ba.created_at < ?
-                 AND src.deleted_at IS NULL AND t.archived_at IS NULL
+                 AND src.deleted_at IS NULL AND t.archived_at IS NULL{_dash_scope_and}
                ORDER BY ba.created_at ASC LIMIT 5""",
-            (_7d,),
+            (_7d, *_dash_scope_params),
         ).fetchall()]
 
         attention_cycles = [dict(r) for r in conn.execute(
-            """SELECT c.id AS cycle_id, c.expected_close_date,
+            f"""SELECT c.id AS cycle_id, c.expected_close_date,
                       t.id AS teacher_id, t.name AS teacher_name
                FROM coaching_cycles c
                JOIN teachers t ON t.id = c.teacher_id
                WHERE c.closed_at IS NULL
                  AND c.expected_close_date IS NOT NULL
                  AND c.expected_close_date <= ?
+                 AND t.archived_at IS NULL{_dash_scope_and}
                ORDER BY c.expected_close_date ASC LIMIT 5""",
-            (_plus7,),
+            (_plus7, *_dash_scope_params),
         ).fetchall()]
 
         attention_lps = [dict(r) for r in conn.execute(
-            """SELECT lp.id AS lp_id, lp.title, lp.status,
+            f"""SELECT lp.id AS lp_id, lp.title, lp.status,
                       COALESCE(lp.updated_at, lp.created_at) AS last_touched,
                       t.id AS teacher_id, t.name AS teacher_name
                FROM lesson_plans lp
                JOIN teachers t ON t.id = lp.teacher_id
                WHERE lp.status IN ('submitted', 'revision_requested')
                  AND COALESCE(lp.updated_at, lp.created_at) < ?
+                 AND t.archived_at IS NULL{_dash_scope_and}
                ORDER BY last_touched ASC LIMIT 5""",
-            (_3d,),
+            (_3d, *_dash_scope_params),
         ).fetchall()]
 
         # "Teacher responded to your move" — unacknowledged adjust/talk responses.
+        # (Not yet coach-scoped; list_unacknowledged_hlm_responses filters by
+        # archived teacher, which is enough for pilot — every teacher on file
+        # is on this coach's caseload in single-coach mode.)
         attention_responses = list_unacknowledged_hlm_responses(conn)
 
         # "Proposed goals waiting to be agreed" — carry-forward / district-priority
         # goals sit in 'proposed' until the coach + teacher agree. Older than 7 days
         # signals they've been forgotten.
         attention_proposed_goals = [dict(r) for r in conn.execute(
-            """SELECT pg.id AS goal_id, pg.title, pg.proposed_at,
+            f"""SELECT pg.id AS goal_id, pg.title, pg.proposed_at,
                       t.id AS teacher_id, t.name AS teacher_name
                FROM professional_goals pg
                JOIN teachers t ON t.id = pg.teacher_id
                WHERE pg.status = 'proposed' AND pg.proposed_at < ?
+                 AND t.archived_at IS NULL{_dash_scope_and}
                ORDER BY pg.proposed_at ASC LIMIT 5""",
-            (_7d,),
+            (_7d, *_dash_scope_params),
         ).fetchall()]
         # `_days_since` is defined later; enrich these rows down where it exists.
 
         # "Teacher profile empty" — teacher exists but has no profile row / no fields.
         # AI recommendations are thinner without profile context.
         attention_no_profile = [dict(r) for r in conn.execute(
-            """SELECT t.id AS teacher_id, t.name AS teacher_name
+            f"""SELECT t.id AS teacher_id, t.name AS teacher_name
                FROM teachers t
                LEFT JOIN teacher_profiles tp ON tp.teacher_id = t.id
                WHERE t.archived_at IS NULL
                  AND (tp.teacher_id IS NULL
                       OR (tp.years_teaching_total IS NULL
-                          AND tp.coaching_style_preference IS NULL))
-               ORDER BY t.name"""
+                          AND tp.coaching_style_preference IS NULL)){_dash_scope_and}
+               ORDER BY t.name""",
+            _dash_scope_params,
         ).fetchall()]
 
         # "Teachers overdue for observation" — per district cadence expectation.
@@ -652,7 +887,8 @@ def dashboard_home(request: Request) -> HTMLResponse:
         _days_between = _dash_dc.get("days_between_obs_target") if _dash_dc else None
         if _days_between:
             for t in conn.execute(
-                "SELECT id, name FROM teachers WHERE archived_at IS NULL ORDER BY name"
+                f"SELECT t.id, t.name FROM teachers t WHERE t.archived_at IS NULL{_dash_scope_and} ORDER BY t.name",
+                _dash_scope_params,
             ).fetchall():
                 due = _next_obs_due(conn, t["id"], _days_between)
                 if due and due["overdue"]:
@@ -696,18 +932,20 @@ def dashboard_home(request: Request) -> HTMLResponse:
             + len(attention_no_profile) + len(attention_proposed_goals)
         )
 
-        # Recent teachers for the tile row (top 6 by most recent activity).
+        # Recent teachers for the tile row (top 6 by most recent activity),
+        # scoped to the coach's caseload.
         recent_teachers = [dict(r) for r in conn.execute(
-            """SELECT t.id, t.name,
+            f"""SELECT t.id, t.name,
                       MAX(COALESCE(o.uploaded_at, o.scored_at, t.created_at)) AS last_activity,
                       (SELECT COUNT(*) FROM observations o2
                        WHERE o2.teacher_id = t.id AND o2.deleted_at IS NULL) AS obs_count
                FROM teachers t
                LEFT JOIN observations o
                       ON o.teacher_id = t.id AND o.deleted_at IS NULL
-               WHERE t.archived_at IS NULL
+               WHERE t.archived_at IS NULL{_dash_scope_and}
                GROUP BY t.id
-               ORDER BY last_activity DESC LIMIT 6"""
+               ORDER BY last_activity DESC LIMIT 6""",
+            _dash_scope_params,
         ).fetchall()]
 
     finally:
@@ -755,11 +993,14 @@ def dashboard_home(request: Request) -> HTMLResponse:
 @app.get("/observations", response_class=HTMLResponse)
 def list_observations(request: Request) -> HTMLResponse:
     """Observations list (moved from / to /observations when the dashboard moved into /)."""
-    _deny_teacher(_current_viewer(request), "All-observations list")
+    viewer = _current_viewer(request)
+    _deny_teacher(viewer, "All-observations list")
+    scope_sql, scope_params = _scope_filter(viewer, teachers_alias="t")
+    _scope_and = (" AND " + scope_sql) if scope_sql else ""
     conn = db_connect(DB_PATH)
     try:
         rows = conn.execute(
-            """SELECT o.id, o.video_filename, o.video_duration_s, o.status,
+            f"""SELECT o.id, o.video_filename, o.video_duration_s, o.status,
                       o.scored_at, o.uploaded_at, o.failure_reason,
                       t.name AS teacher_name,
                       r.name AS rubric_name,
@@ -770,8 +1011,9 @@ def list_observations(request: Request) -> HTMLResponse:
                FROM observations o
                JOIN teachers t ON t.id = o.teacher_id
                JOIN rubrics  r ON r.id = o.rubric_id
-               WHERE o.deleted_at IS NULL
-               ORDER BY o.uploaded_at DESC"""
+               WHERE o.deleted_at IS NULL{_scope_and}
+               ORDER BY o.uploaded_at DESC""",
+            scope_params,
         ).fetchall()
 
         observations = []
@@ -863,6 +1105,17 @@ async def upload_observation(
             )
         except ArchivedTeacherError as e:
             raise HTTPException(400, str(e))
+        # Consent gate: refuse the upload if the teacher hasn't consented.
+        # We don't purge data on revoke, but no NEW recording lands without
+        # active consent — matches the org-level, revocable policy we
+        # agreed on. The teacher's own /consent page grants or revokes.
+        _consent = get_active_consent(conn, teacher_id=teacher_id)
+        if not _consent:
+            raise HTTPException(
+                403,
+                f"{teacher_name.strip()} hasn't consented to being recorded yet. "
+                f"Send them the sign-in link so they can decide before you upload.",
+            )
         rubric_db_id = get_or_create_rubric_from_id(conn, org_id=None, rubric_id_kind=rubric_id)
         # Auto-attach to the cycle that was live when the observation actually
         # happened. Falls back to the currently-active cycle if no date-match
@@ -1645,13 +1898,16 @@ def teachers_list(request: Request, show_archived: int = 0) -> HTMLResponse:
     teachers", so the coach can find and restore one. The two modes render
     the same template with different rows.
     """
-    _deny_teacher(_current_viewer(request), "Roster")
+    viewer = _current_viewer(request)
+    _deny_teacher(viewer, "Roster")
     rubric = get_rubric(DEFAULT_RUBRIC_ID)
+    scope_sql, scope_params = _scope_filter(viewer, teachers_alias="t")
+    _scope_and = (" AND " + scope_sql) if scope_sql else ""
     conn = db_connect(DB_PATH)
     try:
         if show_archived:
             teachers = conn.execute(
-                """SELECT t.id, t.name, t.archived_at,
+                f"""SELECT t.id, t.name, t.archived_at,
                           (SELECT COUNT(*) FROM observations o
                            WHERE o.teacher_id = t.id AND o.status = 'complete'
                                  AND o.deleted_at IS NULL) AS obs_count,
@@ -1659,12 +1915,13 @@ def teachers_list(request: Request, show_archived: int = 0) -> HTMLResponse:
                            WHERE o.teacher_id = t.id AND o.status = 'complete'
                                  AND o.deleted_at IS NULL) AS last_scored
                    FROM teachers t
-                   WHERE t.archived_at IS NOT NULL
-                   ORDER BY t.archived_at DESC"""
+                   WHERE t.archived_at IS NOT NULL{_scope_and}
+                   ORDER BY t.archived_at DESC""",
+                scope_params,
             ).fetchall()
         else:
             teachers = conn.execute(
-                """SELECT t.id, t.name, t.archived_at,
+                f"""SELECT t.id, t.name, t.archived_at,
                           (SELECT COUNT(*) FROM observations o
                            WHERE o.teacher_id = t.id AND o.status = 'complete'
                                  AND o.deleted_at IS NULL) AS obs_count,
@@ -1672,8 +1929,9 @@ def teachers_list(request: Request, show_archived: int = 0) -> HTMLResponse:
                            WHERE o.teacher_id = t.id AND o.status = 'complete'
                                  AND o.deleted_at IS NULL) AS last_scored
                    FROM teachers t
-                   WHERE t.archived_at IS NULL
-                   ORDER BY t.name"""
+                   WHERE t.archived_at IS NULL{_scope_and}
+                   ORDER BY t.name""",
+                scope_params,
             ).fetchall()
 
         rows = []
@@ -1709,7 +1967,8 @@ def teachers_list(request: Request, show_archived: int = 0) -> HTMLResponse:
             })
 
         archived_count = conn.execute(
-            "SELECT COUNT(*) AS c FROM teachers WHERE archived_at IS NOT NULL"
+            f"SELECT COUNT(*) AS c FROM teachers t WHERE t.archived_at IS NOT NULL{_scope_and}",
+            scope_params,
         ).fetchone()["c"]
     finally:
         conn.close()
@@ -1740,7 +1999,9 @@ def teacher_detail(request: Request, teacher_id: str) -> HTMLResponse:
         if not own_id:
             raise HTTPException(403, "Teacher role missing teacher_id")
         return RedirectResponse(url=f"/teachers/{own_id}/teacher-view", status_code=303)
-
+    # Coach must own this teacher; principal must be in the same org.
+    # Deferred until AFTER we know the teacher exists so unknown ids get 404,
+    # cross-caseload ids get 403 (matches the observation gate's info leak posture).
     rubric = get_rubric(DEFAULT_RUBRIC_ID)
     conn = db_connect(DB_PATH)
     try:
@@ -1749,6 +2010,7 @@ def teacher_detail(request: Request, teacher_id: str) -> HTMLResponse:
         ).fetchone()
         if not teacher:
             raise HTTPException(404, "Teacher not found")
+        _require_teacher_access(viewer, teacher_id, "Teacher hub")
 
         profile = get_teacher_profile(conn, teacher_id)
         active_goals = list_goals_for_teacher(conn, teacher_id, active_only=True)
@@ -2200,6 +2462,14 @@ def teacher_facing_view(request: Request, teacher_id: str) -> HTMLResponse:
 
     _first = teacher["name"].split()[0] if teacher["name"] else "there"
 
+    # Consent — the banner on the teacher-view tells them the current state
+    # and offers grant or revoke. Coach-role viewers see it read-only.
+    _consent_conn = db_connect(DB_PATH)
+    try:
+        _consent = get_active_consent(_consent_conn, teacher_id=teacher_id)
+    finally:
+        _consent_conn.close()
+
     return TEMPLATES.TemplateResponse("teacher_view.html", {
         "request": request,
         "teacher": {"id": teacher["id"], "name": teacher["name"], "first": _first},
@@ -2221,7 +2491,57 @@ def teacher_facing_view(request: Request, teacher_id: str) -> HTMLResponse:
         "domains": rubric.domains,
         "self_rating_dimensions": SELF_RATING_DIMENSIONS,
         "practice_log": practice_log,
+        "consent": _consent,
     })
+
+
+@app.post("/teachers/{teacher_id}/consent/grant")
+def grant_consent_route(request: Request, teacher_id: str) -> RedirectResponse:
+    """Record consent for this teacher. Only the teacher themselves (or a
+    coach in dev mode, so smoke tests can seed consent) may grant.
+    """
+    viewer = _current_viewer(request)
+    if viewer.get("role") == "anon":
+        raise HTTPException(401, "Consent needs a sign-in")
+    if viewer["role"] == "teacher" and viewer.get("teacher_id") != teacher_id:
+        raise HTTPException(403, "Not your consent to grant")
+    # Coach or teacher may grant. In production this is teacher-only; the
+    # coach path exists so a coach can seed consent for pilot smoke tests.
+    if viewer["role"] not in ("teacher", "coach"):
+        raise HTTPException(403, "Only the teacher (or their coach) may grant")
+    conn = db_connect(DB_PATH)
+    try:
+        row = conn.execute(
+            "SELECT org_id FROM teachers WHERE id = ?", (teacher_id,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(404)
+        grant_consent(
+            conn, org_id=row["org_id"], teacher_id=teacher_id,
+            granted_by_user_id=viewer.get("user_id") or _SEEDED_IDS.get("user_id"),
+        )
+    finally:
+        conn.close()
+    return RedirectResponse(url=f"/teachers/{teacher_id}/teacher-view", status_code=303)
+
+
+@app.post("/teachers/{teacher_id}/consent/revoke")
+def revoke_consent_route(request: Request, teacher_id: str) -> RedirectResponse:
+    """Revoke consent for this teacher. Teacher-only — a coach can't unilaterally
+    revoke on someone's behalf. Blocks future uploads; existing observations
+    stay (district retention policy governs purge).
+    """
+    viewer = _current_viewer(request)
+    if viewer.get("role") == "anon":
+        raise HTTPException(401, "Consent needs a sign-in")
+    if viewer["role"] != "teacher" or viewer.get("teacher_id") != teacher_id:
+        raise HTTPException(403, "Only the teacher may revoke their own consent")
+    conn = db_connect(DB_PATH)
+    try:
+        revoke_consent(conn, teacher_id=teacher_id)
+    finally:
+        conn.close()
+    return RedirectResponse(url=f"/teachers/{teacher_id}/teacher-view", status_code=303)
 
 
 @app.get("/teachers/{teacher_id}/profile/{side}", response_class=HTMLResponse)
@@ -2274,9 +2594,7 @@ async def profile_save_teacher_side(
     request: Request = None,
 ) -> RedirectResponse:
     """POST from the teacher-side profile form."""
-    # Owner-or-coach: teacher writes only their own; coach writes any.
-    if not _viewer_can_edit_teacher(_current_viewer(request), teacher_id):
-        raise HTTPException(403, "Not your profile")
+    _guard_teacher_write(request, teacher_id, "Teacher profile write")
     form = await request.form()
     self_ratings = {}
     for dim in SELF_RATING_DIMENSIONS:
@@ -2337,6 +2655,7 @@ async def profile_save_coach_side(
 ) -> RedirectResponse:
     # Coach-only: coach ratings + coach's private notes on the teacher.
     _require_coach(_current_viewer(request), "Coach profile edit")
+    _guard_teacher_write(request, teacher_id, "Coach profile edit")
     form = await request.form()
     coach_ratings = {}
     coach_ratings_context = {}
@@ -2391,6 +2710,7 @@ def create_goal_route(
     via the agree route once the goal is proposed.
     """
     _require_coach(_current_viewer(request), "Goal creation")
+    _guard_teacher_write(request, teacher_id, "Goal creation")
     _conn_arch = db_connect(DB_PATH)
     try:
         _refuse_if_archived(_conn_arch, teacher_id, "Goal creation")
@@ -2473,6 +2793,7 @@ def create_cycle_route(
     Coach-only.
     """
     _require_coach(_current_viewer(request), "Cycle creation")
+    _guard_teacher_write(request, teacher_id, "Cycle creation")
     conn = db_connect(DB_PATH)
     try:
         _refuse_if_archived(conn, teacher_id, "Cycle creation")
@@ -3484,6 +3805,7 @@ def add_private_note_route(
     or another teacher's record.
     """
     _require_coach(_current_viewer(request), "Private notes")
+    _guard_teacher_write(request, teacher_id, "Private notes")
     if not body.strip():
         raise HTTPException(400, "Note body required")
     conn = db_connect(DB_PATH)
@@ -3521,6 +3843,7 @@ def delete_private_note_route(
     for a future multi-coach world.
     """
     _require_coach(_current_viewer(request), "Private-note delete")
+    _guard_teacher_write(request, teacher_id, "Private-note delete")
     conn = db_connect(DB_PATH)
     try:
         delete_private_note(
@@ -3547,6 +3870,7 @@ def archive_teacher_route(
     request: Request, teacher_id: str
 ) -> RedirectResponse:
     _require_coach(_current_viewer(request), "Teacher archive")
+    _guard_teacher_write(request, teacher_id, "Teacher archive")
     conn = db_connect(DB_PATH)
     try:
         summary = archive_teacher(conn, teacher_id=teacher_id)
@@ -3570,6 +3894,7 @@ def restore_teacher_route(
     request: Request, teacher_id: str
 ) -> RedirectResponse:
     _require_coach(_current_viewer(request), "Teacher restore")
+    _guard_teacher_write(request, teacher_id, "Teacher restore")
     conn = db_connect(DB_PATH)
     try:
         restore_teacher(conn, teacher_id=teacher_id)
@@ -3623,6 +3948,163 @@ def restore_observation_route(
 
 
 # ---------------------------------------------------------------------------
+# Auth: magic-link sign-in, sign-out, dev mail viewer.
+#
+# Flow the user experiences:
+#   1. Land on any gated page while not signed in → bounced to /signin?next=…
+#   2. Type email → POST /signin → we mint a token, queue an email, show the
+#      "check your email" page.
+#   3. Click the link in the email → GET /auth/{token} → we mint a session,
+#      set the HttpOnly cookie, redirect to `next` or the dashboard.
+#   4. POST /signout → revoke session, clear cookie.
+#
+# During pilot/dev, /dev/mail lists the recent outbound_mail rows so the
+# clickable magic link is one hop away from the /signin page — no SMTP
+# needed to test the loop.
+# ---------------------------------------------------------------------------
+
+
+@app.get("/signin", response_class=HTMLResponse)
+def signin_page(
+    request: Request, next: Optional[str] = None, error: Optional[str] = None,
+) -> HTMLResponse:
+    # If already signed in, kick them where they were headed (or the dashboard).
+    v = _current_viewer(request)
+    if v.get("role") != "anon":
+        dest = next if (next and _is_safe_same_origin_path(next)) else "/"
+        return RedirectResponse(url=dest, status_code=303)
+    return TEMPLATES.TemplateResponse("signin.html", {
+        "request": request,
+        "next": next if (next and _is_safe_same_origin_path(next)) else "",
+        "error": error,
+        "dev_login_enabled": DEV_LOGIN_ENABLED,
+    })
+
+
+@app.post("/signin")
+def signin_submit(
+    request: Request,
+    email: str = Form(...),
+    next: Optional[str] = Form(None),
+) -> HTMLResponse:
+    """Mint a magic-link token, queue the sign-in email, land on the
+    "check your email" page. We show the same acknowledgment page whether
+    or not the email is on file — telling an unknown email that they don't
+    have an account is a free account-enumeration oracle.
+    """
+    email = (email or "").strip().lower()
+    if not email or "@" not in email:
+        return RedirectResponse(
+            url=f"/signin?error=bad_email&next={next or ''}", status_code=303,
+        )
+    safe_next = next if (next and _is_safe_same_origin_path(next)) else "/"
+    conn = db_connect(DB_PATH)
+    try:
+        token, user_id = create_magic_link_token(
+            conn, email=email, next_url=safe_next,
+            ip=(request.client.host if request.client else None),
+        )
+        base = _base_url_for_email(request)
+        link = f"{base}/auth/{token}"
+        subject = "Sign in to Classroom Observer"
+        body = (
+            f"Click to sign in — this link works for {MAGIC_LINK_TTL_MINUTES} minutes:\n\n"
+            f"{link}\n\n"
+            f"If you didn't ask to sign in, you can ignore this."
+        )
+        # Always queue — even for unknown emails — so an attacker probing
+        # doesn't see a shorter round-trip on "email not found".
+        queue_email(
+            conn, to_email=email, subject=subject, body_text=body,
+            related_token_id=token,
+        )
+        # Log the link server-side so pilot/dev can find it without SMTP.
+        # Never log for unknown emails (avoids putting typo'd addresses in
+        # the log; the outbound_mail row is enough).
+        if user_id:
+            import logging
+            logging.getLogger("uvicorn.error").info(
+                "Magic link for %s → %s (expires in %d min)",
+                email, link, MAGIC_LINK_TTL_MINUTES,
+            )
+    finally:
+        conn.close()
+    return TEMPLATES.TemplateResponse("signin_check_email.html", {
+        "request": request, "email": email,
+    })
+
+
+@app.get("/auth/{token}", response_class=HTMLResponse)
+def auth_consume(request: Request, token: str) -> HTMLResponse:
+    """Consume a magic-link token, mint a session, set the cookie, redirect."""
+    conn = db_connect(DB_PATH)
+    try:
+        result = consume_magic_link_token(conn, token=token)
+        if not result:
+            return RedirectResponse(
+                url="/signin?error=bad_link", status_code=303,
+            )
+        sid = create_session(
+            conn, user_id=result["user_id"],
+            ip=(request.client.host if request.client else None),
+            user_agent=request.headers.get("user-agent", "")[:512],
+            magic_link_token_id=token,
+        )
+    finally:
+        conn.close()
+    dest = result["next_url"] if (result["next_url"] and _is_safe_same_origin_path(result["next_url"])) else "/"
+    resp = RedirectResponse(url=dest, status_code=303)
+    # HttpOnly: JS can't read the session cookie (XSS payload can't lift it).
+    # SameSite=lax: cross-origin GET navigation (following email link) still
+    # carries the cookie; cross-origin POST does not.
+    # secure=True is set only when the request scheme was HTTPS — a local
+    # http:// pilot must still work.
+    is_https = request.url.scheme == "https"
+    resp.set_cookie(
+        SESSION_COOKIE, sid,
+        max_age=SESSION_TTL_DAYS * 24 * 3600,
+        path="/", httponly=True, samesite="lax", secure=is_https,
+    )
+    return resp
+
+
+@app.post("/signout")
+def signout(request: Request) -> RedirectResponse:
+    sid = request.cookies.get(SESSION_COOKIE)
+    if sid:
+        conn = db_connect(DB_PATH)
+        try:
+            revoke_session(conn, session_id=sid)
+        finally:
+            conn.close()
+    resp = RedirectResponse(url="/signin", status_code=303)
+    resp.delete_cookie(SESSION_COOKIE, path="/")
+    return resp
+
+
+@app.get("/dev/mail", response_class=HTMLResponse)
+def dev_mail_viewer(request: Request) -> HTMLResponse:
+    """Dev-only: recent outbound mail. Refuses unless OBSERVER_DEV_LOGIN=1
+    is set — otherwise this would be an inbox-peek oracle in production.
+    """
+    if not DEV_LOGIN_ENABLED:
+        raise HTTPException(404, "Not found")
+    conn = db_connect(DB_PATH)
+    try:
+        rows = list_recent_outbound_mail(conn, limit=30)
+    finally:
+        conn.close()
+    base = _base_url_for_email(request)
+    for r in rows:
+        # Show a clickable link when the mail is a magic-link email.
+        if r.get("related_token_id"):
+            r["magic_link"] = f"{base}/auth/{r['related_token_id']}"
+    return TEMPLATES.TemplateResponse("dev_mail.html", {
+        "request": request, "mails": rows,
+    })
+
+
+# ---------------------------------------------------------------------------
 # Viewer switching + two-sided negotiation routes
 # ---------------------------------------------------------------------------
 
@@ -3642,7 +4124,12 @@ def switch_viewer(
       3. sensible default: teacher-view for teacher role, dashboard for coach
 
     role='coach' clears the teacher scope; role='teacher' requires teacher_id.
+
+    Dev-only: refuses when OBSERVER_DEV_LOGIN is unset, so a stray form
+    submit in production can't flip role.
     """
+    if not DEV_LOGIN_ENABLED:
+        raise HTTPException(404, "Not found")
     if role == "coach":
         cookie_value = "coach"
     elif role == "principal":

@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Sign in · Classroom Observer{% endblock %}
+{% block content %}
+
+<div style="max-width: 480px; margin: 60px auto 0;">
+  <h1 style="margin-bottom: 8px;">Sign in</h1>
+  <p class="muted">Put in the email your district registered. We'll send you a one-click link — no password to keep track of.</p>
+
+  {% if error == 'bad_email' %}
+    <div class="card" style="background:#fdf2f0; border-color:#e6c9c9; margin: 16px 0;">
+      That doesn't look like an email. Try again.
+    </div>
+  {% elif error == 'bad_link' %}
+    <div class="card" style="background:#fdf2f0; border-color:#e6c9c9; margin: 16px 0;">
+      That sign-in link didn't work — it may have expired, been used already, or been mistyped. Ask for a fresh one below.
+    </div>
+  {% endif %}
+
+  <form method="post" action="/signin" class="card" style="margin-top: 16px;">
+    <input type="hidden" name="next" value="{{ next }}">
+    <label>Email
+      <input type="email" name="email" required autofocus placeholder="you@district.org">
+    </label>
+    <button type="submit">Email me a sign-in link</button>
+  </form>
+
+  {% if dev_login_enabled %}
+  <div class="card" style="margin-top: 20px; background:#fafafa;">
+    <p class="muted small" style="margin: 0 0 8px;">Dev only</p>
+    <p class="muted small">
+      Skip the email round-trip: <a href="/dev/mail">the outbound-mail viewer</a> shows recent magic links.
+    </p>
+  </div>
+  {% endif %}
+</div>
+
+{% endblock %}

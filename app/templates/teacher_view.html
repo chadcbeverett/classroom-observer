@@ -22,6 +22,7 @@
 
 <div class="teacher-view-banner">
   <span class="banner-label">You're viewing as {{ teacher.first }}</span>
+  {% if DEV_LOGIN_ENABLED %}
   <form method="post" action="/whoami/switch" style="display:inline;">
     <input type="hidden" name="role" value="coach">
     <input type="hidden" name="redirect_to" value="/teachers/{{ teacher.id }}">
@@ -29,7 +30,52 @@
       <svg class="icon"><use href="#icon-arrow-right"/></svg>Back to coach view
     </button>
   </form>
+  {% endif %}
 </div>
+
+{# ---- Consent banner ---- #}
+{% set _v = request.state.viewer if request.state and request.state.viewer else {'role':'anon'} %}
+{% if not consent %}
+<section class="card" style="background:#fdf6ec; border-color:#e6c9a0; margin-bottom: 16px;">
+  <h2 style="margin-top:0;">Consent to being recorded</h2>
+  <p>Your coach can't upload video of your classroom until you say it's okay. Here's what "okay" means:</p>
+  <ul class="muted small" style="margin: 0 0 12px 20px;">
+    <li>Your coach can upload classroom video and use the AI to draft reads.</li>
+    <li>You always see what the AI wrote through your coach's edit — never raw.</li>
+    <li>You can revoke this at any time. New uploads stop; existing observations stay in your record.</li>
+  </ul>
+  {% if _v.role == 'teacher' and _v.teacher_id == teacher.id %}
+  <form method="post" action="/teachers/{{ teacher.id }}/consent/grant" style="margin: 0;">
+    <button type="submit">I agree — my coach can record</button>
+  </form>
+  {% elif _v.role in ('coach', 'principal') %}
+    <p class="muted small">{{ teacher.first }} hasn't consented yet. New uploads are blocked until they sign the consent from their own view.</p>
+    {% if DEV_LOGIN_ENABLED %}
+    <form method="post" action="/teachers/{{ teacher.id }}/consent/grant" style="margin: 0;">
+      <button type="submit" class="button-link secondary">Grant on {{ teacher.first }}'s behalf (dev)</button>
+    </form>
+    {% endif %}
+  {% endif %}
+</section>
+{% else %}
+{# Compact "consented" chip visible to the teacher themselves so they know
+   the state, and can revoke. Coach viewers get a read-only badge. #}
+{% if _v.role == 'teacher' and _v.teacher_id == teacher.id %}
+<section class="card" style="background:#f4f9f4; border-color:#c9e6cd; margin-bottom: 16px;">
+  <div style="display:flex; justify-content: space-between; align-items:center; gap: 12px; flex-wrap: wrap;">
+    <div>
+      <strong>You consented to being recorded on {{ consent.consented_at | warmdate }}.</strong>
+      <span class="muted small">If you revoke, new uploads stop. Anything already on file stays.</span>
+    </div>
+    <form method="post" action="/teachers/{{ teacher.id }}/consent/revoke"
+          onsubmit="return confirm('Revoke consent? Your coach won\\'t be able to upload new video until you agree again.');"
+          style="margin: 0;">
+      <button type="submit" class="button-link secondary">Revoke consent</button>
+    </form>
+  </div>
+</section>
+{% endif %}
+{% endif %}
 
 {# ---- Hero: reset the frame ---- #}
 <section class="teacher-hero teacher-hero-personal">

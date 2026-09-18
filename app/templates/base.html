@@ -77,44 +77,38 @@
         <a href="/lesson-plans"><svg class="icon"><use href="#icon-lesson-plan"/></svg>Lesson plans</a>
         <a href="/admin/district-context"><svg class="icon"><use href="#icon-district"/></svg>District</a>
       </nav>
-      {% set _v = request.state.viewer if request.state and request.state.viewer else {'role':'coach'} %}
+      {% set _v = request.state.viewer if request.state and request.state.viewer else {'role':'anon'} %}
       <div class="viewer-chip {{ 'as-teacher' if _v.role == 'teacher' }}{{ ' as-principal' if _v.role == 'principal' }}{{ ' as-district' if _v.role == 'district' }}">
         {% if _v.role == 'coach' %}
           <svg class="icon icon-sm"><use href="#icon-check"/></svg>
-          Viewing as coach
-          <form method="post" action="/whoami/switch" style="display:inline;margin-left:6px;">
-            <input type="hidden" name="role" value="principal">
-            <button type="submit" class="viewer-return">→ principal</button>
-          </form>
-          <form method="post" action="/whoami/switch" style="display:inline;margin-left:4px;">
-            <input type="hidden" name="role" value="district">
-            <button type="submit" class="viewer-return">→ district</button>
-          </form>
+          Signed in as {{ _v.name or _v.email or 'coach' }}
         {% elif _v.role == 'principal' %}
           <svg class="icon icon-sm"><use href="#icon-district"/></svg>
-          Viewing as principal
-          <form method="post" action="/whoami/switch" style="display:inline;margin-left:6px;">
-            <input type="hidden" name="role" value="district">
-            <button type="submit" class="viewer-return">→ district</button>
-          </form>
-          <form method="post" action="/whoami/switch" style="display:inline;margin-left:4px;">
-            <input type="hidden" name="role" value="coach">
-            <button type="submit" class="viewer-return">Back to coach</button>
-          </form>
+          Signed in as {{ _v.name or _v.email or 'principal' }} · principal
         {% elif _v.role == 'district' %}
           <svg class="icon icon-sm"><use href="#icon-district"/></svg>
-          Viewing as district
-          <form method="post" action="/whoami/switch" style="display:inline;margin-left:6px;">
-            <input type="hidden" name="role" value="coach">
-            <button type="submit" class="viewer-return">Back to coach</button>
-          </form>
-        {% else %}
+          Signed in as {{ _v.name or _v.email or 'district' }} · district
+        {% elif _v.role == 'teacher' %}
           <svg class="icon icon-sm"><use href="#icon-teachers"/></svg>
-          Viewing as teacher
-          <form method="post" action="/whoami/switch" style="display:inline;margin-left:6px;">
-            <input type="hidden" name="role" value="coach">
-            <button type="submit" class="viewer-return">Back to coach</button>
-          </form>
+          Signed in as {{ _v.name or _v.email or 'teacher' }}
+        {% endif %}
+        {% if _v.role != 'anon' %}
+        <form method="post" action="/signout" style="display:inline;margin-left:8px;">
+          <button type="submit" class="viewer-return">Sign out</button>
+        </form>
+        {% endif %}
+        {% if DEV_LOGIN_ENABLED %}
+          {# Dev only: quick switch between the four surfaces without going
+             through the email round-trip. Never rendered in production. #}
+          <span class="muted small" style="margin-left:10px;">dev:</span>
+          {% for _r in ['coach', 'principal', 'district'] %}
+            {% if _v.role != _r %}
+            <form method="post" action="/whoami/switch" style="display:inline;margin-left:4px;">
+              <input type="hidden" name="role" value="{{ _r }}">
+              <button type="submit" class="viewer-return">→ {{ _r }}</button>
+            </form>
+            {% endif %}
+          {% endfor %}
         {% endif %}
       </div>
     </div>

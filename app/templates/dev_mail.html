@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Dev outbound mail{% endblock %}
+{% block content %}
+
+<h1>Outbound mail (dev)</h1>
+<p class="muted">Recent queued emails. In a real deploy these go via SMTP; here the link IS the delivery.</p>
+
+{% if not mails %}
+  <div class="empty-cta"><h3>Nothing queued yet.</h3></div>
+{% else %}
+  <section class="card" style="padding: 0; overflow: hidden;">
+    <table class="obs-table row-list">
+      <thead>
+        <tr>
+          <th>Queued</th>
+          <th>To</th>
+          <th>Subject</th>
+          <th>Sign-in link</th>
+          <th>State</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for m in mails %}
+        <tr>
+          <td class="muted small">{{ m.created_at | warmdatetime }}</td>
+          <td>{{ m.to_email }}</td>
+          <td>{{ m.subject }}</td>
+          <td>
+            {% if m.magic_link %}
+              <a class="button-link" href="{{ m.magic_link }}">Open link</a>
+            {% else %}
+              <span class="muted small">—</span>
+            {% endif %}
+          </td>
+          <td class="muted small">
+            {% if m.sent_at %}sent {{ m.sent_at | warmdatetime }}
+            {% elif m.failed_at %}failed: {{ m.failure_reason }}
+            {% else %}queued
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+{% endif %}
+
+{% endblock %}
