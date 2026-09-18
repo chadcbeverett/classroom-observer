@@ -203,8 +203,20 @@ def _run_job(
 
     except Exception as e:
         traceback.print_exc()
-        _set_status(db_path, observation_id, "failed",
-                    failure_reason=f"{type(e).__name__}: {e}")
+        # Sanitize the failure_reason before it lands in the DB → coach UI.
+        # audio.py / frames.py already scrub the video path from their own
+        # RuntimeError messages, but a raw exception from anywhere else in
+        # the pipeline may still include an absolute host path. Strip the
+        # uploads root prefix, keep enough of the message to be actionable.
+        raw = f"{type(e).__name__}: {e}"
+        try:
+            _uploads_root = str(video_path.parent.parent)  # app/uploads
+            raw = raw.replace(_uploads_root, "<uploads>")
+            raw = raw.replace(str(video_path.parent), f"<uploads>/<obs>")
+            raw = raw.replace(str(video_path), f"<uploads>/<obs>/{video_path.name}")
+        except Exception:
+            pass
+        _set_status(db_path, observation_id, "failed", failure_reason=raw[:2000])
 
 
 def _persist_report(
