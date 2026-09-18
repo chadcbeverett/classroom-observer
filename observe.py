@@ -152,8 +152,22 @@ def run(
     duration_s = probe_duration_seconds(video_path)
     print(f"  Duration: {int(duration_s // 60):02d}:{int(duration_s % 60):02d}")
 
+    # --reuse re-uses cached transcript.json and cached frames from a prior
+    # run. Both are meaningful ONLY with the same interval / model that
+    # produced them — otherwise the timestamps handed to the AI are fabricated
+    # and the metadata misattributes the transcript. A ``_reuse.json`` marker
+    # written on every non-reuse run stores the actual settings; we prefer
+    # its values over the CLI flags on reuse, and fall through if it's missing
+    # (older cached run before the marker existed).
+    reuse_meta_path = work_dir / "_reuse.json"
     have_transcript = reuse and transcript_path.exists()
     have_frames = reuse and frames_dir.exists() and any(frames_dir.glob("frame_*.jpg"))
+    reuse_meta = None
+    if reuse and reuse_meta_path.exists():
+        try:
+            reuse_meta = json.loads(reuse_meta_path.read_text())
+        except Exception:
+            reuse_meta = None
 
     if have_transcript:
         _print_step("Reusing cached transcript (--reuse)")
@@ -161,6 +175,13 @@ def run(
             TranscriptSegment(**s) for s in json.loads(transcript_path.read_text())
         ]
         print(f"  Segments: {len(segments)}")
+        if reuse_meta and reuse_meta.get("whisper_model") and reuse_meta["whisper_model"] != whisper_model:
+            print(
+                f"  NOTE: --whisper-model={whisper_model} differs from the model "
+                f"the cached transcript was produced by ({reuse_meta['whisper_model']}). "
+                f"Recording the cached model in metadata so the audit trail stays honest."
+            )
+            whisper_model = reuse_meta["whisper_model"]
     else:
         _print_step("Extracting audio (ffmpeg)")
         audio_path = extract_audio(video_path, work_dir / "audio.wav")
@@ -174,6 +195,29 @@ def run(
 
     if have_frames:
         _print_step("Reusing cached frames (--reuse)")
+        # Timestamps have to match the interval THIS ffmpeg pass used, not
+        # whatever --frame-interval was passed on the reuse run. A user
+        # iterating on prompts might not realize the interval flag no longer
+        # applies once the frames are cached.
+        cached_interval = frame_interval
+        if reuse_meta and reuse_meta.get("frame_interval_seconds"):
+            cached_interval = float(reuse_meta["frame_interval_seconds"])
+            if cached_interval != frame_interval:
+                print(
+                    f"  NOTE: --frame-interval={frame_interval} does not match the "
+                    f"interval the cached frames were sampled at ({cached_interval}). "
+                    f"Using the cached interval for timestamps to keep evidence citations honest."
+                )
+            frame_interval = cached_interval
+        elif reuse_meta is None:
+            # No marker means the cache predates this defense; we cannot
+            # verify the interval matches. Refuse rather than silently
+            # attaching fabricated timestamps to the AI's evidence citations.
+            print(
+                "  WARNING: cached frames have no recorded interval and --reuse cannot "
+                "verify they match --frame-interval. Re-run without --reuse to be safe.",
+                file=sys.stderr,
+            )
         frames = [
             SampledFrame(timestamp_seconds=i * frame_interval, path=p)
             for i, p in enumerate(sorted(frames_dir.glob("frame_*.jpg")))
@@ -183,6 +227,17 @@ def run(
         _print_step(f"Sampling frames (one per {frame_interval:.0f}s, ffmpeg)")
         frames = sample_frames(video_path, frames_dir, interval_seconds=frame_interval)
         print(f"  Frames: {len(frames)}")
+
+    # Persist the reuse marker for future --reuse runs on the same out_dir.
+    # Written even when we're reusing (with the possibly-corrected values)
+    # so a subsequent reuse sees a consistent record.
+    try:
+        reuse_meta_path.write_text(json.dumps({
+            "whisper_model": whisper_model,
+            "frame_interval_seconds": frame_interval,
+        }, indent=2))
+    except OSError:
+        pass
 
     _print_step(f"Scoring against {rubric.name} (Claude Opus 4.7, adaptive thinking)")
     report = score_observation(

@@ -32,6 +32,27 @@ def _domain_short_name(domain: str) -> str:
     return slug
 
 
+# Excel / Google Sheets / LibreOffice interpret any cell starting with one of
+# these characters as a formula. AI-generated text (bite_sized_action starting
+# with "-3 minute wait time…", or a narrative opening with "@" for a mention)
+# would evaluate on open — best case #NAME?, worst case an attacker-controlled
+# =WEBSERVICE() call reaching out to a URL. Prefix with a single quote to
+# neutralize (Excel drops the quote on display but treats the cell as text).
+_FORMULA_PREFIX_CHARS = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_safe(value):
+    """Neutralize any leading char that a spreadsheet would treat as a formula.
+    Applied to every string cell before writerow. Numeric / None / non-string
+    values pass through unchanged.
+    """
+    if not isinstance(value, str) or not value:
+        return value
+    if value[0] in _FORMULA_PREFIX_CHARS:
+        return "'" + value
+    return value
+
+
 def _teacher_name_from_dir(dir_name: str) -> str:
     base = dir_name.split("_")[0]
     return base.replace("-", " ").title()
@@ -220,7 +241,7 @@ def main() -> None:
         writer = csv.DictWriter(f, fieldnames=columns, quoting=csv.QUOTE_ALL)
         writer.writeheader()
         for _, row in rows:
-            writer.writerow(row)
+            writer.writerow({k: _csv_safe(v) for k, v in row.items()})
 
     print(f"Wrote {len(rows)} row(s) to: {out_path}")
     print(f"Rubric: {rubric.name}\n")

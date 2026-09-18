@@ -500,10 +500,44 @@ def import_scores_json(
     coach_id = get_or_create_user(
         conn, org_id=org_id, email=observer_email, name=observer_name, role="coach"
     )
+    # Cross-caseload guard: if a teacher of the given name exists in this
+    # org and is already assigned to a DIFFERENT coach, the import would
+    # silently attach the imported observation to another coach's caseload.
+    # Refuse loudly so a stray baseline import doesn't quietly show up on a
+    # real coach's teacher page. (Web upload path has the same guard —
+    # matches app/main.py:_upload flow post-round-8.)
+    existing_t = conn.execute(
+        """SELECT id, assigned_coach_user_id FROM teachers
+           WHERE org_id = ? AND name = ? AND archived_at IS NULL""",
+        (org_id, teacher_name),
+    ).fetchone()
+    if (
+        existing_t
+        and existing_t["assigned_coach_user_id"]
+        and existing_t["assigned_coach_user_id"] != coach_id
+    ):
+        raise ValueError(
+            f"import: teacher {teacher_name!r} is already on another coach's caseload "
+            f"in this org. Pass --observer-email matching the existing coach, or use "
+            f"a distinguishing --teacher-name."
+        )
     teacher_id = get_or_create_teacher(
         conn, org_id=org_id, name=teacher_name, coach_user_id=coach_id
     )
     rubric_id = get_or_create_rubric_from_id(conn, org_id=None, rubric_id_kind=rubric_kind)
+
+    # Consent: the web upload path refuses observations for teachers without
+    # an active consent record (post-round-8). The import path is used to
+    # replay baselines from disk — often teachers who never signed in to
+    # grant consent themselves. Auto-grant here on their behalf and mark
+    # the record with the import context so it's distinguishable from a
+    # real teacher-authored grant.
+    if get_active_consent(conn, teacher_id=teacher_id) is None:
+        grant_consent(
+            conn, org_id=org_id, teacher_id=teacher_id,
+            granted_by_user_id=coach_id,
+            form_version="import-auto",
+        )
 
     # Look for an existing observation with the same source folder marker.
     # We stash the folder name in the video_ref column as a stable-per-folder id.
@@ -570,6 +604,18 @@ def import_scores_json(
     report_md_path = report_dir / "report.md"
     rendered_md = report_md_path.read_text() if report_md_path.exists() else None
 
+    # Unpublish any prior version BEFORE inserting the new one. The partial
+    # unique index ``uq_rv_one_published`` allows at most one row per
+    # observation with ``published_at IS NOT NULL``; the second import
+    # against the same folder would otherwise INSERT a v2 alongside a
+    # still-published v1 and blow up with IntegrityError, marking the
+    # import "failed" despite the docstring's idempotency promise. Match
+    # the shape _persist_report uses for the web path.
+    conn.execute(
+        "UPDATE report_versions SET published_at = NULL WHERE observation_id = ?",
+        (observation_id,),
+    )
+
     # Auto-publish v1 in the single-user semantics of the local app. When a
     # multi-user coach-edit workflow lands, this becomes a decision point.
     ts = _now_iso()
@@ -594,11 +640,13 @@ def import_scores_json(
         ),
     )
 
-    # Audit log the import action.
+    # Audit log the import action. Namespaced action so a future _is_sample_db
+    # check (see tools/seed_sample_data.py) can distinguish an imported-
+    # baseline DB from a real pilot one.
     conn.execute(
         """INSERT INTO audit_log
                (id, org_id, actor_user_id, action, target_type, target_id, metadata, occurred_at)
-           VALUES (?, ?, ?, 'import_report', 'observation', ?, ?, ?)""",
+           VALUES (?, ?, ?, 'import:baseline:report', 'observation', ?, ?, ?)""",
         (
             _new_id(), org_id, coach_id, observation_id,
             json.dumps({"version_number": new_ver, "source_folder": report_dir.name}),

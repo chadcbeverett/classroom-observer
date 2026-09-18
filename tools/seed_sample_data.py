@@ -35,6 +35,7 @@ from pipeline.db import (
     upsert_district_context,
     attach_observation_to_cycle,
     attach_goal_to_cycle,
+    grant_consent,
 )
 
 DB = ROOT / "reports" / "observations.sqlite"
@@ -324,12 +325,111 @@ def seed_district_context(conn, org_id):
     )
 
 
+def _is_sample_db(conn) -> bool:
+    """Return True iff this DB was created via tools/import_baselines.py.
+
+    The import script stashes a marker in the audit_log table
+    (`actor_user_id = <the seeded Import Coach>`, action prefix
+    'import:baseline:'). We treat any DB carrying such a row AND whose
+    teacher roster is exactly the four baseline names AND whose only
+    coach user is `coach@example.com` as a "sample DB" — safe to wipe.
+    A real pilot DB will fail all three checks.
+    """
+    # Check 1: audit_log evidence of a baseline import.
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) AS c FROM audit_log WHERE action LIKE 'import:baseline:%'"
+        ).fetchone()
+        if not row or row["c"] == 0:
+            return False
+    except Exception:
+        # audit_log may not exist on very early DBs — that's not a sample.
+        return False
+    # Check 2: only the seeded import coach in users.
+    coaches = conn.execute(
+        "SELECT email FROM users WHERE role = 'coach'"
+    ).fetchall()
+    coach_emails = {c["email"] for c in coaches}
+    if coach_emails != {"coach@example.com"}:
+        return False
+    # Check 3: teacher roster is exactly the four baselines (no more, no less).
+    teachers = {t["name"] for t in conn.execute(
+        "SELECT name FROM teachers WHERE archived_at IS NULL"
+    ).fetchall()}
+    if teachers != {"Summey", "Dulaney", "Lopez", "Livingston"}:
+        return False
+    return True
+
+
 def main() -> None:
-    conn = connect(DB)
+    # Guardrails before touching anything. This script has DELETE statements
+    # keyed on `name IN ('Summey','Dulaney','Lopez','Livingston')` — very
+    # common surnames. Running it against a real pilot DB would wipe a real
+    # Lopez's coach notes, cycles, goals, and profile with no recovery.
+    #
+    # Two locks:
+    #   1. The DB must look like a sample DB (see _is_sample_db).
+    #   2. --i-understand-this-wipes-data must be passed OR the env var
+    #      OBSERVER_SEED_ALLOW=1 must be set.
+    # --dry-run bypasses both and only lists what would happen.
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--db", type=Path, default=DB, help=f"DB path (default: {DB})")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Report what would be wiped/seeded; make no changes.")
+    parser.add_argument("--i-understand-this-wipes-data", action="store_true",
+                        help="Required to run against any DB. Read the docstring first.")
+    parser.add_argument("--force-non-sample-db", action="store_true",
+                        help="Override the sample-DB check. Only use if you know the DB is scratch.")
+    parser.add_argument("--coach-email", default=None,
+                        help="Email of the coach to attribute the seed to. Defaults to the "
+                             "single coach in the DB; required when the DB has >1 coach so a "
+                             "wrong coach doesn't get named as author of confidential notes.")
+    args = parser.parse_args()
+
+    import os
+    consented = args.i_understand_this_wipes_data or os.environ.get("OBSERVER_SEED_ALLOW") == "1"
+    if not consented and not args.dry_run:
+        raise SystemExit(
+            "Refusing to run: this script issues DELETE statements against every teacher whose\n"
+            "surname is one of Summey / Dulaney / Lopez / Livingston. If a real pilot teacher\n"
+            "shares one of those surnames, their coach notes, cycles, goals, and profile will\n"
+            "be destroyed. Re-run with --dry-run to preview, or\n"
+            "--i-understand-this-wipes-data (or OBSERVER_SEED_ALLOW=1) to proceed."
+        )
+
+    conn = connect(args.db)
+
+    if not args.force_non_sample_db and not _is_sample_db(conn):
+        conn.close()
+        raise SystemExit(
+            f"Refusing to run against {args.db}: it doesn't look like a sample DB. Expected\n"
+            f"  - audit_log rows from tools/import_baselines.py\n"
+            f"  - a single coach user with email coach@example.com\n"
+            f"  - exactly the 4 baseline teacher names, nothing more\n"
+            f"To override (scratch DB only): --force-non-sample-db"
+        )
+
     org = _get(conn, "SELECT id FROM organizations LIMIT 1")
-    coach = _get(conn, "SELECT id FROM users WHERE role = 'coach' LIMIT 1")
-    if not org or not coach:
-        raise SystemExit("No org or coach in DB. Run tools/import_baselines.py first.")
+    if args.coach_email:
+        coach = _get(conn, "SELECT id, email FROM users WHERE role='coach' AND email=?",
+                     args.coach_email)
+        if not coach:
+            raise SystemExit(f"No coach with email {args.coach_email!r} in DB.")
+    else:
+        coaches = _list(conn, "SELECT id, email FROM users WHERE role='coach'")
+        if not coaches:
+            raise SystemExit("No coach in DB. Run tools/import_baselines.py first.")
+        if len(coaches) > 1:
+            raise SystemExit(
+                f"DB has {len(coaches)} coaches — pass --coach-email to pick one so\n"
+                f"confidential coach-private notes don't get attributed to whoever's\n"
+                f"user_id happens to sort first. Available: "
+                f"{', '.join(c['email'] for c in coaches)}"
+            )
+        coach = coaches[0]
+    if not org:
+        raise SystemExit("No org in DB. Run tools/import_baselines.py first.")
 
     teachers_by_name = {t["name"]: t for t in _list(
         conn, "SELECT id, name FROM teachers WHERE name IN ('Summey','Dulaney','Lopez','Livingston')"
@@ -340,8 +440,30 @@ def main() -> None:
         raise SystemExit(f"Missing teachers in DB: {missing}. Run tools/import_baselines.py first.")
 
     ids = [t["id"] for t in teachers_by_name.values()]
+
+    if args.dry_run:
+        print("DRY RUN — no changes will be made.")
+        print(f"Would wipe sample data for teachers: {sorted(teachers_by_name)}")
+        for tid in ids:
+            n_notes = conn.execute("SELECT COUNT(*) AS c FROM coach_private_notes WHERE teacher_id=?", (tid,)).fetchone()["c"]
+            n_goals = conn.execute("SELECT COUNT(*) AS c FROM professional_goals WHERE teacher_id=?", (tid,)).fetchone()["c"]
+            n_cycles = conn.execute("SELECT COUNT(*) AS c FROM coaching_cycles WHERE teacher_id=?", (tid,)).fetchone()["c"]
+            name = next(k for k, v in teachers_by_name.items() if v["id"] == tid)
+            print(f"  {name}: {n_notes} notes, {n_goals} goals, {n_cycles} cycles")
+        conn.close()
+        return
+
     wipe_sample_data(conn, ids)
     print(f"Wiped prior sample data for {len(ids)} teachers.")
+
+    # Grant consent for each sample teacher so the upload path in the UI can
+    # actually be demoed against them. Post-round-8 the upload route refuses
+    # observations for teachers without an active consent record — a demo
+    # that seeds them unconsented would 403 on every new-upload click.
+    for tname, t in teachers_by_name.items():
+        grant_consent(conn, org_id=org["id"], teacher_id=t["id"],
+                      granted_by_user_id=coach["id"])
+    print(f"Granted consent for {len(teachers_by_name)} sample teachers.")
 
     summey = seed_summey(conn, org["id"], coach["id"], teachers_by_name["Summey"])
     print(f"Seeded Summey: cycle={summey['cycle_id'][:8]}...")

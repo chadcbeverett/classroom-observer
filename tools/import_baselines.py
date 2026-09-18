@@ -31,6 +31,14 @@ def main() -> None:
                     help="Directory of report subfolders.")
     ap.add_argument("--reset", action="store_true",
                     help="Delete the DB file before importing (fresh start).")
+    # Coach identity for the imports. Defaults preserve the historical
+    # "coach@example.com / Import Coach" author-of-record so re-imports on
+    # an old DB don't create a second phantom coach; a pilot deploy should
+    # override both so imported baselines land on a real coach's caseload.
+    ap.add_argument("--observer-email", default="coach@example.com",
+                    help="Email of the coach to attribute imports to (default: coach@example.com).")
+    ap.add_argument("--observer-name", default="Import Coach",
+                    help="Display name for that coach (default: 'Import Coach').")
     args = ap.parse_args()
 
     if args.reset and args.db.exists():
@@ -41,6 +49,7 @@ def main() -> None:
     conn = connect(args.db)
     init_db(conn)
     print(f"Initialized DB: {args.db}")
+    print(f"Attributing imports to: {args.observer_name} <{args.observer_email}>")
 
     imported: list[tuple[str, str]] = []
     failed: list[tuple[str, str]] = []
@@ -50,9 +59,23 @@ def main() -> None:
         if not (sub / "scores.json").exists():
             continue
         try:
-            obs_id = import_scores_json(conn, sub)
+            obs_id = import_scores_json(
+                conn, sub,
+                observer_email=args.observer_email,
+                observer_name=args.observer_name,
+            )
             imported.append((sub.name, obs_id))
         except Exception as e:
+            # Roll back any partial writes from this folder so a later
+            # helper's commit() doesn't flush a half-done UPDATE onto disk.
+            # (Before this rollback, a failed folder's uncommitted UPDATE
+            # on `observations` was silently persisted by the next folder's
+            # get_or_create_teacher commit — leaving observation metadata
+            # updated but with no matching report_versions row.)
+            try:
+                conn.rollback()
+            except Exception:
+                pass
             failed.append((sub.name, f"{type(e).__name__}: {e}"))
 
     print(f"\nImported {len(imported)} observation(s):")
