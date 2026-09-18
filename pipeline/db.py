@@ -1534,20 +1534,40 @@ def grant_consent(
 ) -> str:
     """Record consent. Idempotent: if there's already an active consent for
     this teacher, returns its id without inserting a duplicate.
+
+    Race-safe: the check-then-insert on ``get_active_consent`` alone would
+    let two concurrent grants both see "no active consent" and both INSERT,
+    with the second hitting ``uq_one_active_consent_per_teacher`` and
+    surfacing as a 500. On IntegrityError we re-read and return the winner's
+    id — the caller gets the same idempotent behavior either way.
     """
     existing = get_active_consent(conn, teacher_id=teacher_id)
     if existing:
         return existing["id"]
     cid = _new_id()
-    conn.execute(
-        """INSERT INTO consent_records
-             (id, org_id, teacher_id, scope, form_version, method,
-              consented_at, granted_by_user_id)
-           VALUES (?, ?, ?, ?, ?, 'electronic_signature', ?, ?)""",
-        (cid, org_id, teacher_id, scope, form_version, _now_iso(), granted_by_user_id),
-    )
-    conn.commit()
-    return cid
+    try:
+        conn.execute(
+            """INSERT INTO consent_records
+                 (id, org_id, teacher_id, scope, form_version, method,
+                  consented_at, granted_by_user_id)
+               VALUES (?, ?, ?, ?, ?, 'electronic_signature', ?, ?)""",
+            (cid, org_id, teacher_id, scope, form_version, _now_iso(), granted_by_user_id),
+        )
+        conn.commit()
+        return cid
+    except sqlite3.IntegrityError:
+        # The only unique constraint an INSERT here can trip is the partial
+        # index ``uq_one_active_consent_per_teacher``. (Other constraints on
+        # this table are NOT NULL / CHECK on scope+method, all pre-validated
+        # by the arguments.) SQLite doesn't include the index NAME in the
+        # error string — it reports "UNIQUE constraint failed: teacher_id"
+        # — so we can't match on name; but the semantics are unambiguous:
+        # a concurrent grant slipped in between our check-then-insert. Re-
+        # read and return the winner's id, matching the idempotent contract.
+        winner = get_active_consent(conn, teacher_id=teacher_id)
+        if winner:
+            return winner["id"]
+        raise
 
 
 def revoke_consent(

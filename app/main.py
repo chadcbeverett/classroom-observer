@@ -363,14 +363,23 @@ def _current_viewer(request: Request) -> dict:
             # A teacher-role user's teacher_id is looked up by user_id → teacher
             # (the user IS a teacher; the teacher row's own id is what routes
             # gate on). Cached inside the request-scoped viewer to avoid re-hits.
+            #
+            # Email match is case-insensitive on both sides: users are stored
+            # verbatim as typed at sign-up, teachers imported by CSV keep the
+            # roster's spelling, and neither is guaranteed to match. A
+            # case-mismatch here would silently drop teacher_id off the viewer
+            # and make every teacher-scoped route refuse the teacher's own
+            # requests as 403.
             if sess["role"] == "teacher":
                 conn = db_connect(DB_PATH)
                 try:
                     tr = conn.execute(
-                        "SELECT id FROM teachers WHERE assigned_coach_user_id IS NOT NULL AND email = ?",
+                        "SELECT id FROM teachers WHERE assigned_coach_user_id IS NOT NULL "
+                        "AND lower(email) = lower(?)",
                         (sess["email"],),
                     ).fetchone() or conn.execute(
-                        "SELECT id FROM teachers WHERE email = ?", (sess["email"],)
+                        "SELECT id FROM teachers WHERE lower(email) = lower(?)",
+                        (sess["email"],),
                     ).fetchone()
                     if tr:
                         v["teacher_id"] = tr["id"]
@@ -393,10 +402,15 @@ def _current_viewer(request: Request) -> dict:
 
 
 # Paths that must remain reachable to an anon viewer — the auth surface
-# itself, static assets, and the observation-status polling endpoint that
-# the upload page hits before the session cookie exists.
+# itself and static assets. Exact matches AND prefix matches are stored
+# separately so a future route like /signup or /favicon-hex-of-doom can't
+# slip past the anon gate by a startswith accident (the middleware treats
+# every allowlist entry as an exact-or-with-trailing-slash prefix).
+_ANON_ALLOWED_EXACT = frozenset({
+    "/signin", "/signout", "/favicon.ico", "/dev/mail",
+})
 _ANON_ALLOWED_PREFIXES = (
-    "/signin", "/signout", "/auth/", "/static/", "/favicon", "/dev/mail",
+    "/auth/", "/static/",
 )
 
 
@@ -750,7 +764,13 @@ async def _inject_viewer(request: Request, call_next):
     request.state.viewer = _current_viewer(request)
     if request.state.viewer.get("role") == "anon":
         path = request.url.path
-        if not any(path == p or path.startswith(p) for p in _ANON_ALLOWED_PREFIXES):
+        # Prefixes are declared with a trailing slash so /signup can't
+        # match "/signin"'s startswith or /faviconics's match "/favicon".
+        # Exact matches handle the fixed paths.
+        is_anon_ok = path in _ANON_ALLOWED_EXACT or any(
+            path.startswith(p) for p in _ANON_ALLOWED_PREFIXES
+        )
+        if not is_anon_ok:
             from urllib.parse import quote
             nxt = path
             if request.url.query:
@@ -1211,17 +1231,11 @@ async def upload_observation(
                 f"Observations must be dated on or before today ({_today.isoformat()}).",
             )
 
-    # Save the upload to disk.
-    obs_id = str(uuid.uuid4())
-    safe_name = video.filename or "upload.mov"
-    dest_dir = UPLOADS_DIR / obs_id
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dest_path = dest_dir / safe_name
-    with dest_path.open("wb") as f:
-        while chunk := await video.read(1024 * 1024):
-            f.write(chunk)
-
-    # Create the DB row (status = pending).
+    # Resolve teacher + run every gate BEFORE writing the video to disk.
+    # A 300 MB upload that gets refused for consent or cross-coach conflict
+    # would otherwise leave orphaned bytes under app/uploads/ that no
+    # observation row references — the consent policy would be violated on
+    # disk even if the DB row was blocked.
     viewer = _current_viewer(request)
     _coach_uid = _viewer_uid(viewer)
     _org_id = viewer.get("org_id") or _SEEDED_IDS["org_id"]
@@ -1261,6 +1275,32 @@ async def upload_observation(
                 f"{teacher_name.strip()} hasn't consented to being recorded yet. "
                 f"Send them the sign-in link so they can decide before you upload.",
             )
+    except HTTPException:
+        conn.close()
+        raise
+    # Only now that every guard has cleared do we spend the disk / bandwidth
+    # to persist the video. If anything downstream fails we clean up the file
+    # to keep app/uploads/ consistent with the observations table.
+    obs_id = str(uuid.uuid4())
+    safe_name = video.filename or "upload.mov"
+    dest_dir = UPLOADS_DIR / obs_id
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest_path = dest_dir / safe_name
+    try:
+        with dest_path.open("wb") as f:
+            while chunk := await video.read(1024 * 1024):
+                f.write(chunk)
+    except Exception:
+        # Whatever failed mid-write, don't leave a partial file behind.
+        try:
+            if dest_path.exists():
+                dest_path.unlink()
+            dest_dir.rmdir()
+        except OSError:
+            pass
+        conn.close()
+        raise
+    try:
         rubric_db_id = get_or_create_rubric_from_id(conn, org_id=None, rubric_id_kind=rubric_id)
         # Auto-attach to the cycle that was live when the observation actually
         # happened. Falls back to the currently-active cycle if no date-match
@@ -1323,6 +1363,16 @@ async def upload_observation(
              str(dest_path), safe_name, _now_iso_ts, _obs_at),
         )
         conn.commit()
+    except Exception:
+        # DB write failed after the video landed on disk. Clean up so the
+        # file store stays consistent with the observations table.
+        try:
+            if dest_path.exists():
+                dest_path.unlink()
+            dest_dir.rmdir()
+        except OSError:
+            pass
+        raise
     finally:
         conn.close()
 
@@ -2647,12 +2697,25 @@ def grant_consent_route(request: Request, teacher_id: str) -> RedirectResponse:
     viewer = _current_viewer(request)
     if viewer.get("role") == "anon":
         raise HTTPException(401, "Consent needs a sign-in")
-    if viewer["role"] == "teacher" and viewer.get("teacher_id") != teacher_id:
-        raise HTTPException(403, "Not your consent to grant")
-    # Coach or teacher may grant. In production this is teacher-only; the
-    # coach path exists so a coach can seed consent for pilot smoke tests.
-    if viewer["role"] not in ("teacher", "coach"):
-        raise HTTPException(403, "Only the teacher (or their coach) may grant")
+    # Teacher grants their own consent. Coach may grant only for pilot smoke
+    # tests, and only when they own the teacher AND OBSERVER_DEV_LOGIN=1 is
+    # set — production consent is always the teacher's affirmative act, never
+    # a coach's on their behalf. Principals / district are refused entirely.
+    role = viewer["role"]
+    if role == "teacher":
+        if viewer.get("teacher_id") != teacher_id:
+            raise HTTPException(403, "Not your consent to grant")
+    elif role == "coach":
+        if not DEV_LOGIN_ENABLED:
+            raise HTTPException(
+                403,
+                "Only the teacher may grant their own consent. "
+                "In dev (OBSERVER_DEV_LOGIN=1) a coach may seed consent for their own caseload."
+            )
+        # Even in dev, refuse a coach forging consent for someone else's teacher.
+        _require_teacher_access(viewer, teacher_id, "Consent grant")
+    else:
+        raise HTTPException(403, "Only the teacher may grant their own consent")
     conn = db_connect(DB_PATH)
     try:
         row = conn.execute(
@@ -2854,7 +2917,7 @@ def create_goal_route(
     via the agree route once the goal is proposed.
     """
     _require_coach(_current_viewer(request), "Goal creation")
-    _guard_teacher_write(request, teacher_id, "Goal creation")
+    viewer = _guard_teacher_write(request, teacher_id, "Goal creation")
     _conn_arch = db_connect(DB_PATH)
     try:
         _refuse_if_archived(_conn_arch, teacher_id, "Goal creation")
@@ -2872,7 +2935,7 @@ def create_goal_route(
     try:
         goal_id = create_goal(
             conn,
-            org_id=_SEEDED_IDS["org_id"],
+            org_id=viewer.get("org_id") or _SEEDED_IDS["org_id"],
             teacher_id=teacher_id,
             coaching_cycle_id=coaching_cycle_id or None,
             title=title,
@@ -3962,8 +4025,12 @@ def add_private_note_route(
     if not body.strip():
         raise HTTPException(400, "Note body required")
     conn = db_connect(DB_PATH)
-    _refuse_if_archived(conn, teacher_id, "Private note")
     try:
+        # _refuse_if_archived raises HTTPException(409) on an archived teacher.
+        # It MUST be inside the try/finally, otherwise the raise short-circuits
+        # the outer body and conn.close() never fires — leaking a sqlite3.Connection
+        # each time a coach posts to an archived-teacher URL.
+        _refuse_if_archived(conn, teacher_id, "Private note")
         add_coach_private_note(
             conn,
             org_id=viewer.get("org_id") or _SEEDED_IDS["org_id"],
@@ -4369,10 +4436,28 @@ def obs_hlm_response(
     Requires that a coach's move has been published for this observation —
     the teacher never negotiates with AI output directly, only with what the
     coach chose to publish.
+
+    Teacher-role only: if a coach POSTed here their user_id would land in
+    ``hlm_responses.teacher_user_id``, misattributing the response and
+    silently closing an attention item the teacher never touched. Refuse
+    everyone but the observation's own teacher.
     """
     viewer = _guard_obs_write(request, observation_id, "HLM response")
+    if viewer.get("role") != "teacher":
+        raise HTTPException(
+            403,
+            "Only the teacher responds to their coach's move. "
+            "Coaches use the teacher-view (via /whoami/switch in dev) to submit as the teacher."
+        )
     conn = db_connect(DB_PATH)
     try:
+        # Confirm the viewer IS this observation's teacher, not just any teacher.
+        # (Belt-and-suspenders on top of _guard_obs_write's teacher-access check.)
+        obs_row = conn.execute(
+            "SELECT teacher_id FROM observations WHERE id = ?", (observation_id,)
+        ).fetchone()
+        if not obs_row or obs_row["teacher_id"] != viewer.get("teacher_id"):
+            raise HTTPException(403, "Not your observation")
         move = get_current_coach_move(conn, observation_id)
         if not move:
             raise HTTPException(409, "Your coach hasn't published a move for this observation yet")
