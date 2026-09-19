@@ -1,15 +1,26 @@
-anthropic>=0.88.0
-faster-whisper>=1.0.3
-pydantic>=2.7.0
+# Pins are compatible ranges (~=) so patch releases still flow but a breaking
+# major/minor lift can't slip in silently — pilot builds must match what the
+# tests + docker path validated. The Dockerfile does a fresh pip in a clean
+# venv; without pins, `pip install` grabs the latest and a Starlette 1.x drop
+# broke TemplateResponse's old-style signature between local and container
+# builds. Pin, then bump deliberately.
+anthropic~=0.100.0
+faster-whisper~=1.2.1
+pydantic~=2.13.0
 
-# Web stack
-fastapi>=0.115
-uvicorn>=0.35
-jinja2>=3.1
-python-multipart>=0.0.20
+# Web stack. Starlette 1.x removed the deprecated
+# `TemplateResponse(name, {"request": request, ...})` compat shim; app/main.py
+# still uses that shape in 21 places. FastAPI 0.128.x pulls Starlette 0.49.x,
+# which keeps the shim under a DeprecationWarning. When app/main.py migrates
+# every call site to the new signature, these pins can lift.
+fastapi~=0.128.0
+uvicorn~=0.39.0
+starlette~=0.49.0
+jinja2~=3.1.6
+python-multipart~=0.0.20
 
 # Markdown → HTML with bleach sanitization on top for AI-produced reports
 # (see _sanitize_report_html in app/main.py — the AI can be prompt-injected
 # to output raw HTML, so bleach whitelists only markdown-shaped tags).
-markdown>=3.9
-bleach>=6.0
+markdown~=3.9
+bleach~=6.2.0
