@@ -71,9 +71,17 @@ def main() -> None:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    # DB default honors OBSERVER_DB so `docker-compose exec app python
+    # tools/onboard_district.py …` writes to the same file the app is
+    # reading (/data/observations.sqlite in the container image), not to
+    # the argparse-computed `reports/observations.sqlite` next to the
+    # script. Falls through to the historic default for CLI use without
+    # the env var set.
     ap.add_argument("--db", type=Path,
-                    default=ROOT / "reports" / "observations.sqlite",
-                    help="Path to SQLite DB file (default: reports/observations.sqlite)")
+                    default=Path(os.environ.get(
+                        "OBSERVER_DB", str(ROOT / "reports" / "observations.sqlite"))),
+                    help="Path to SQLite DB file "
+                         "(default: $OBSERVER_DB or reports/observations.sqlite)")
     ap.add_argument("--org-name", required=True,
                     help='Display name of the district / school. E.g. "Testville Unified".')
     ap.add_argument("--org-slug", required=True,

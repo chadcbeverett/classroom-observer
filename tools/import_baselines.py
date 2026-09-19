@@ -25,8 +25,16 @@ from pipeline.db import (
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--db", type=Path, default=ROOT / "reports" / "observations.sqlite",
-                    help="Path to SQLite DB file.")
+    # Honors OBSERVER_DB env — same reason as tools/onboard_district.py: a
+    # `docker-compose exec app` invocation should hit the mounted-volume DB
+    # (/data/observations.sqlite in the container), not the argparse-computed
+    # path next to the script.
+    import os as _os
+    ap.add_argument("--db", type=Path,
+                    default=Path(_os.environ.get(
+                        "OBSERVER_DB", str(ROOT / "reports" / "observations.sqlite"))),
+                    help="Path to SQLite DB file (default: $OBSERVER_DB or "
+                         "reports/observations.sqlite).")
     ap.add_argument("--reports-dir", type=Path, default=ROOT / "reports",
                     help="Directory of report subfolders.")
     ap.add_argument("--reset", action="store_true",

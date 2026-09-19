@@ -38,7 +38,11 @@ from pipeline.db import (
     grant_consent,
 )
 
-DB = ROOT / "reports" / "observations.sqlite"
+import os as _os
+# Honors OBSERVER_DB — matches tools/onboard_district.py and
+# tools/import_baselines.py so a `docker-compose exec app` invocation
+# hits the mounted-volume DB, not the argparse-computed default.
+DB = Path(_os.environ.get("OBSERVER_DB", str(ROOT / "reports" / "observations.sqlite")))
 
 
 def _get(conn, sql, *params):
