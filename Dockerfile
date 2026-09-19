@@ -54,9 +54,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         poppler-utils \
         ca-certificates \
         curl \
+        sqlite3 \
     && ( [ "${DROP_DOCX_SUPPORT}" = "1" ] || apt-get install -y --no-install-recommends pandoc ) \
     && rm -rf /var/lib/apt/lists/* \
     && rm -rf /root/.cache
+
+# sqlite3 (~5 MB) is here so PILOT_RUNBOOK.md §10's monitoring queries
+# work via `docker-compose exec app sqlite3 /data/observations.sqlite …`
+# as well as on the host — otherwise a docker operator would have to
+# install sqlite3 on the host and reach in through the bind-mount.
 
 # Non-root user. The uploads dir needs to be writable by this user, so we
 # chown /data at container start; see the entrypoint.
