@@ -88,18 +88,13 @@ HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
 EXPOSE 8000
 
 # Entrypoint prepares /data (chown + mkdir) then launches uvicorn as the
-# observer user. Kept inline so a `docker run` without compose works.
-COPY --chmod=755 <<'EOF' /entrypoint.sh
-#!/bin/sh
-set -e
-
-# Ensure the persistent state dir is writable by the non-root user.
-mkdir -p /data
-chown -R observer:observer /data
-
-# Drop privileges and exec so signals reach uvicorn cleanly.
-exec runuser -u observer -- "$@"
-EOF
+# observer user. Kept as a real file in the repo (scripts/entrypoint.sh)
+# rather than an inline heredoc so the legacy Docker builder can COPY it —
+# `COPY --chmod=` and heredoc-into-COPY both require BuildKit, which is on
+# by default in modern setups but not universal (CI, corporate policy,
+# older engines). Two lines of Dockerfile beats a build-time surprise.
+COPY scripts/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]
 
