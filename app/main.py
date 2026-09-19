@@ -1200,7 +1200,7 @@ def dashboard_home(request: Request) -> HTMLResponse:
     else:
         _greeting = "Good evening"
 
-    return TEMPLATES.TemplateResponse("dashboard.html", {
+    return TEMPLATES.TemplateResponse(request, "dashboard.html", {
         "request": request,
         "greeting": _greeting,
         "attention_debriefs": attention_debriefs,
@@ -1275,7 +1275,7 @@ def list_observations(request: Request) -> HTMLResponse:
     finally:
         conn.close()
 
-    return TEMPLATES.TemplateResponse("list.html", {
+    return TEMPLATES.TemplateResponse(request, "list.html", {
         "request": request,
         "observations": observations,
         "rubrics": list(RUBRICS.values()),
@@ -1627,7 +1627,7 @@ def observation_detail(request: Request, observation_id: str) -> HTMLResponse:
         else:
             _mode = "review"
 
-    return TEMPLATES.TemplateResponse("detail.html", {
+    return TEMPLATES.TemplateResponse(request, "detail.html", {
         "request": request,
         "avatar_idx": _av_idx,
         "mode": _mode,
@@ -1698,7 +1698,7 @@ def teacher_lesson_plans_list(request: Request, teacher_id: str) -> HTMLResponse
         plans = list_lesson_plans_for_teacher(conn, teacher_id)
     finally:
         conn.close()
-    return TEMPLATES.TemplateResponse("lesson_plans_list.html", {
+    return TEMPLATES.TemplateResponse(request, "lesson_plans_list.html", {
         "request": request,
         "teacher": {"id": teacher["id"], "name": teacher["name"]},
         "plans": plans,
@@ -1763,7 +1763,7 @@ def lesson_plan_detail(request: Request, plan_id: str) -> HTMLResponse:
     finally:
         conn.close()
     _av_idx = sum(ord(c) for c in (plan.get("teacher_name") or "")) % 6
-    return TEMPLATES.TemplateResponse("lesson_plan_detail.html", {
+    return TEMPLATES.TemplateResponse(request, "lesson_plan_detail.html", {
         "request": request,
         "plan": plan,
         "avatar_idx": _av_idx,
@@ -1905,7 +1905,7 @@ def all_lesson_plans(request: Request) -> HTMLResponse:
         plans = list_lesson_plans_for_org(conn, _SEEDED_IDS["org_id"])
     finally:
         conn.close()
-    return TEMPLATES.TemplateResponse("lesson_plans_all.html", {
+    return TEMPLATES.TemplateResponse(request, "lesson_plans_all.html", {
         "request": request,
         "plans": plans,
     })
@@ -2269,7 +2269,7 @@ def teachers_list(request: Request, show_archived: int = 0) -> HTMLResponse:
     finally:
         conn.close()
 
-    return TEMPLATES.TemplateResponse("teachers_list.html", {
+    return TEMPLATES.TemplateResponse(request, "teachers_list.html", {
         "request": request,
         "teachers": rows,
         "domains": rubric.domains,
@@ -2530,7 +2530,7 @@ def teacher_detail(request: Request, teacher_id: str) -> HTMLResponse:
             _bits.append("Active cycle")
     _hero_summary = " · ".join(_bits) if _bits else "Profile not yet completed"
 
-    return TEMPLATES.TemplateResponse("teacher_detail.html", {
+    return TEMPLATES.TemplateResponse(request, "teacher_detail.html", {
         "request": request,
         "teacher": {
             "id": teacher["id"], "name": teacher["name"],
@@ -2632,7 +2632,7 @@ def teacher_prep_view(request: Request, teacher_id: str) -> HTMLResponse:
     _av_idx = sum(ord(c) for c in (teacher["name"] or "")) % 6
     _first = teacher["name"].split()[0] if teacher["name"] else "there"
 
-    return TEMPLATES.TemplateResponse("teacher_prep.html", {
+    return TEMPLATES.TemplateResponse(request, "teacher_prep.html", {
         "request": request,
         "teacher": {"id": teacher["id"], "name": teacher["name"], "first": _first},
         "avatar_idx": _av_idx,
@@ -2766,7 +2766,7 @@ def teacher_facing_view(request: Request, teacher_id: str) -> HTMLResponse:
     finally:
         _consent_conn.close()
 
-    return TEMPLATES.TemplateResponse("teacher_view.html", {
+    return TEMPLATES.TemplateResponse(request, "teacher_view.html", {
         "request": request,
         "teacher": {"id": teacher["id"], "name": teacher["name"], "first": _first},
         "greeting": _greeting,
@@ -2877,7 +2877,7 @@ def profile_edit_page(request: Request, teacher_id: str, side: str) -> HTMLRespo
     finally:
         conn.close()
     _av_idx = sum(ord(c) for c in (teacher["name"] or "")) % 6
-    return TEMPLATES.TemplateResponse("profile_edit.html", {
+    return TEMPLATES.TemplateResponse(request, "profile_edit.html", {
         "request": request,
         "teacher": {"id": teacher["id"], "name": teacher["name"]},
         "avatar_idx": _av_idx,
@@ -3394,7 +3394,7 @@ def _render_cycle(request: Request, cycle_id: str, *, template: str, close_warn:
     except Exception:
         pass
 
-    return TEMPLATES.TemplateResponse(template, {
+    return TEMPLATES.TemplateResponse(request, template, {
         "request": request,
         "cycle": cycle,
         "teacher": {"id": teacher["id"], "name": teacher["name"]},
@@ -3495,7 +3495,7 @@ def district_context_page(request: Request, year: Optional[str] = None) -> HTMLR
     finally:
         conn.close()
 
-    return TEMPLATES.TemplateResponse("district_context.html", {
+    return TEMPLATES.TemplateResponse(request, "district_context.html", {
         "request": request,
         "academic_year": year,
         "ctx": ctx,
@@ -3746,7 +3746,7 @@ def users_upload_page(request: Request) -> HTMLResponse:
     # of the write-path pattern; using `_deny_teacher` here (the earlier draft)
     # let principal/district POST rosters, which they shouldn't.
     _require_coach(_current_viewer(request), "User upload")
-    return TEMPLATES.TemplateResponse("users_upload.html", {
+    return TEMPLATES.TemplateResponse(request, "users_upload.html", {
         "request": request,
         "results": None,
         "totals": None,
@@ -3934,7 +3934,7 @@ async def users_upload_submit(
         "total": len(results),
     }
 
-    return TEMPLATES.TemplateResponse("users_upload.html", {
+    return TEMPLATES.TemplateResponse(request, "users_upload.html", {
         "request": request,
         "results": results,
         "totals": totals,
@@ -4297,7 +4297,7 @@ def signin_page(
     if v.get("role") != "anon":
         dest = next if (next and _is_safe_same_origin_path(next)) else "/"
         return RedirectResponse(url=dest, status_code=303)
-    return TEMPLATES.TemplateResponse("signin.html", {
+    return TEMPLATES.TemplateResponse(request, "signin.html", {
         "request": request,
         "next": next if (next and _is_safe_same_origin_path(next)) else "",
         "error": error,
@@ -4376,7 +4376,7 @@ def signin_submit(
             )
     finally:
         conn.close()
-    return TEMPLATES.TemplateResponse("signin_check_email.html", {
+    return TEMPLATES.TemplateResponse(request, "signin_check_email.html", {
         "request": request, "email": email,
     })
 
@@ -4501,7 +4501,7 @@ def dev_mail_viewer(request: Request) -> HTMLResponse:
         # Show a clickable link when the mail is a magic-link email.
         if r.get("related_token_id"):
             r["magic_link"] = f"{base}/auth/{r['related_token_id']}"
-    return TEMPLATES.TemplateResponse("dev_mail.html", {
+    return TEMPLATES.TemplateResponse(request, "dev_mail.html", {
         "request": request, "mails": rows,
     })
 
@@ -4944,7 +4944,7 @@ def principal_dashboard(request: Request) -> HTMLResponse:
     finally:
         conn.close()
 
-    return TEMPLATES.TemplateResponse("principal_dashboard.html", {
+    return TEMPLATES.TemplateResponse(request, "principal_dashboard.html", {
         "request": request,
         "rubric_domains": rubric.domains,
         "rubric_levels": rubric.rating_levels,
@@ -5188,7 +5188,7 @@ def district_dashboard(request: Request) -> HTMLResponse:
     finally:
         conn.close()
 
-    return TEMPLATES.TemplateResponse("district_dashboard.html", {
+    return TEMPLATES.TemplateResponse(request, "district_dashboard.html", {
         "request": request,
         "schools": schools,
         "district_context": district_context,
@@ -5364,7 +5364,7 @@ def compliance_report(
     na = sum(1 for r in rows if r["status"] == "n/a")
     total_obs = sum(r["obs_count"] for r in rows)
 
-    return TEMPLATES.TemplateResponse("compliance.html", {
+    return TEMPLATES.TemplateResponse(request, "compliance.html", {
         "request": request,
         "rows": rows,
         "target": target,
