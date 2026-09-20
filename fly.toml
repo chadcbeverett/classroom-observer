@@ -1,0 +1,78 @@
+# Fly.io deploy config for Classroom Observer.
+#
+# See PILOT_RUNBOOK.md §2 (server setup) for the pre-flight checklist;
+# the Fly-specific translation lives in this file. Bring-up sequence:
+#
+#   fly launch --no-deploy --copy-config      # picks up this file
+#   fly volumes create observer_data --size 1 --region <region>
+#   fly secrets set ANTHROPIC_API_KEY=... OBSERVER_SESSION_SECRET=$(openssl rand -hex 32) \
+#     SMTP_HOST=smtp.gmail.com SMTP_PORT=587 SMTP_USER=noreply@your-domain \
+#     SMTP_PASSWORD='<app-password>' SMTP_FROM=noreply@your-domain \
+#     OBSERVER_PUBLIC_URL=https://coach.your-domain
+#   fly deploy
+#   fly certs create coach.your-domain            # then add the CNAME/A/AAAA it prints
+#   fly ssh console -C "python tools/onboard_district.py --org-name '...' \
+#     --org-slug ... --coach-email ... --coach-name '...' --rename"
+
+app = "classroom-observer"        # change if the name is taken; fly launch will offer alternatives
+primary_region = "iad"            # Ashburn, VA. Change to your closest region.
+kill_signal = "SIGTERM"           # uvicorn shuts down its background threads on SIGTERM
+kill_timeout = "20s"              # give the job worker time to finish an in-flight job
+
+[build]
+  dockerfile = "Dockerfile"
+  # DROP_DOCX_SUPPORT=1 as a build arg would shave ~150 MB (pandoc); leave it
+  # off unless disk becomes tight.
+
+[env]
+  # Non-secret. Every secret goes through `fly secrets set` so it never lands
+  # in the repo or the image. These four have safe defaults; override only if
+  # a specific pilot needs to.
+  OBSERVER_LOG_FORMAT = "json"    # structured logs for ops dashboards / grep
+  SMTP_STARTTLS = "1"             # Google + Postmark + Fastmail all want this on 587
+  PYTHONUNBUFFERED = "1"          # so uvicorn logs stream promptly to `fly logs`
+  # Persistent state lives under the mounted volume — see [[mounts]] below.
+  # (These match the Dockerfile defaults; setting them here makes the intent
+  # explicit and lets a fly.toml reader see where state lives.)
+  OBSERVER_DB = "/data/observations.sqlite"
+  OBSERVER_UPLOADS = "/data/uploads"
+
+# Persistent volume: SQLite DB, uploaded videos, lesson plans, district
+# documents. Size to expected pilot volume; grow with `fly volumes extend`.
+# Backups: `fly ssh console -C "sqlite3 /data/observations.sqlite '.backup /data/backup.sqlite'"`
+# then `fly ssh sftp get /data/backup.sqlite` — see PILOT_RUNBOOK.md §10.
+[[mounts]]
+  source = "observer_data"
+  destination = "/data"
+  initial_size = "1gb"            # room for the DB + a modest video upload cache
+
+[http_service]
+  internal_port = 8000
+  force_https = true              # HTTP → HTTPS 301; the app's cookie code
+                                  # keys `Secure` off X-Forwarded-Proto, which
+                                  # Fly sets. Trusted because Dockerfile's
+                                  # uvicorn uses --forwarded-allow-ips=*.
+  auto_stop_machines = "off"      # keep the job worker alive between requests;
+                                  # scale-to-zero would kill the background
+                                  # thread mid-transcode. On is fine only when
+                                  # you also queue jobs off-instance.
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+
+  # /health is anon-allowlisted and pings the DB + background threads.
+  [[http_service.checks]]
+    grace_period = "20s"          # startup: schema migration + auto-seed
+    interval = "30s"
+    method = "GET"
+    timeout = "5s"
+    path = "/health"
+
+[[vm]]
+  size = "shared-cpu-1x"          # smallest tier; fine for 1-2 coaches at pilot volume.
+                                  # Bump to shared-cpu-2x if faster-whisper transcription
+                                  # is a bottleneck. GPU tiers exist but aren't wired up yet.
+  memory = "1gb"                  # faster-whisper medium model needs ~800MB during a
+                                  # transcode. 512MB oomkills mid-job.
+  cpus = 1
+  cpu_kind = "shared"
