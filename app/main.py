@@ -137,6 +137,26 @@ app.mount("/static", StaticFiles(directory=str(APP_ROOT / "static")), name="stat
 # observation detail page.
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
+MAX_VIDEO_BYTES = int(os.environ.get("OBSERVER_MAX_VIDEO_MB", "4096")) * 1024 * 1024
+MAX_DOCUMENT_BYTES = int(os.environ.get("OBSERVER_MAX_DOCUMENT_MB", "50")) * 1024 * 1024
+
+
+async def _stream_upload_to(upload: UploadFile, dest_path: Path, max_bytes: int, label: str) -> int:
+    # Aborts past max_bytes so one oversized file can't fill the volume — a full
+    # disk fails SQLite writes for every user, not just the uploader.
+    written = 0
+    with dest_path.open("wb") as f:
+        while chunk := await upload.read(1024 * 1024):
+            written += len(chunk)
+            if written > max_bytes:
+                f.close()
+                dest_path.unlink(missing_ok=True)
+                raise HTTPException(
+                    413, f"{label} is larger than the {max_bytes // (1024 * 1024)} MB limit."
+                )
+            f.write(chunk)
+    return written
+
 
 # ---------------------------------------------------------------------------
 # Startup: init DB, seed single-user org
@@ -879,6 +899,21 @@ def _template_ctx(request: Request, **extra) -> dict:
     return {"request": request, "viewer": request.state.viewer, **extra}
 
 
+@app.middleware("http")
+async def _security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    # HSTS only over HTTPS: browsers ignore it on http:// anyway, and a local
+    # http pilot must not end up with localhost pinned.
+    if request.url.scheme == "https":
+        response.headers.setdefault(
+            "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+        )
+    return response
+
+
 TEMPLATES.env.globals["current_role"] = lambda request: getattr(
     request.state, "viewer", {"role": "coach"}
 )["role"]
@@ -1380,9 +1415,7 @@ async def upload_observation(
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest_path = dest_dir / safe_name
     try:
-        with dest_path.open("wb") as f:
-            while chunk := await video.read(1024 * 1024):
-                f.write(chunk)
+        await _stream_upload_to(video, dest_path, MAX_VIDEO_BYTES, "Video")
     except Exception:
         # Whatever failed mid-write, don't leave a partial file behind.
         try:
@@ -1721,9 +1754,7 @@ async def create_lesson_plan_route(
     dest_dir = LESSON_PLANS_DIR / plan_id / "v1"
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest_path = dest_dir / (document.filename or "plan.pdf")
-    with dest_path.open("wb") as f:
-        while chunk := await document.read(1024 * 1024):
-            f.write(chunk)
+    await _stream_upload_to(document, dest_path, MAX_DOCUMENT_BYTES, "Lesson plan")
     from pipeline.text_extract import extract_text
     extracted = extract_text(dest_path)
 
@@ -1791,9 +1822,7 @@ async def upload_lesson_plan_version(
     dest_dir = LESSON_PLANS_DIR / plan_id / f"v{next_ver}"
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest_path = dest_dir / (document.filename or "plan.pdf")
-    with dest_path.open("wb") as f:
-        while chunk := await document.read(1024 * 1024):
-            f.write(chunk)
+    await _stream_upload_to(document, dest_path, MAX_DOCUMENT_BYTES, "Lesson plan")
     from pipeline.text_extract import extract_text
     extracted = extract_text(dest_path)
 
@@ -3525,9 +3554,7 @@ async def upload_district_document(
     dest_dir = UPLOADS_DIR.parent / "district_documents" / doc_id
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest_path = dest_dir / (document.filename or f"upload{ext}")
-    with dest_path.open("wb") as f:
-        while chunk := await document.read(1024 * 1024):
-            f.write(chunk)
+    await _stream_upload_to(document, dest_path, MAX_DOCUMENT_BYTES, "District document")
 
     from pipeline.text_extract import extract_text
     extracted = extract_text(dest_path)
