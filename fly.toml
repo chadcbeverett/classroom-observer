@@ -14,7 +14,7 @@
 #   fly ssh console -C "python tools/onboard_district.py --org-name '...' \
 #     --org-slug ... --coach-email ... --coach-name '...' --rename"
 
-app = "classroom-observer"        # change if the name is taken; fly launch will offer alternatives
+app = "classroom-observer-imaginelit"   # global to fly.io; "classroom-observer" was taken
 primary_region = "iad"            # Ashburn, VA. Change to your closest region.
 kill_signal = "SIGTERM"           # uvicorn shuts down its background threads on SIGTERM
 kill_timeout = "20s"              # give the job worker time to finish an in-flight job
