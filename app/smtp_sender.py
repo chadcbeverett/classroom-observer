@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import smtplib
 import ssl
 import threading
@@ -77,6 +78,13 @@ class SmtpSender:
         self.poll_interval = poll_interval
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
+        # Delivery health, surfaced by /health. A live thread proves nothing
+        # about whether the relay accepts our credentials — bad SMTP auth
+        # reported "ok" for two days on the first pilot deploy because the
+        # probe only checked liveness.
+        self.last_error: Optional[str] = None
+        self.consecutive_failures = 0
+        self.last_sent_at: Optional[str] = None
 
     # ---- Lifecycle ----------------------------------------------------
 
@@ -149,6 +157,8 @@ class SmtpSender:
             # doesn't grow silently.
             log.error("SMTP connect to %s:%d failed: %s", self.host, self.port, e)
             reason = f"SMTP connect failed: {type(e).__name__}: {e}"
+            self.last_error = reason[:300]
+            self.consecutive_failures += len(rows)
             conn = db_connect(self.db_path)
             try:
                 for row in rows:
@@ -174,9 +184,14 @@ class SmtpSender:
                         )
                         conn.commit()
                         sent += 1
+                        self.consecutive_failures = 0
+                        self.last_error = None
+                        self.last_sent_at = _now_iso()
                     except Exception as e:
                         log.error("SMTP send of %s to %s failed: %s",
                                   row["id"][:8], row["to_email"], e)
+                        self.last_error = f"{type(e).__name__}: {e}"[:300]
+                        self.consecutive_failures += 1
                         conn.execute(
                             "UPDATE outbound_mail SET failed_at = ?, failure_reason = ? WHERE id = ?",
                             (_now_iso(), f"{type(e).__name__}: {e}"[:2000], row["id"]),
@@ -251,8 +266,11 @@ def start_if_configured(db_path: Path) -> Optional[SmtpSender]:
         log.info("SMTP not configured (SMTP_HOST unset) — outbound_mail stays queued; use /dev/mail in dev.")
         return None
     port = int(os.environ.get("SMTP_PORT", "587"))
-    user = os.environ.get("SMTP_USER") or None
-    password = os.environ.get("SMTP_PASSWORD") or None
+    user = (os.environ.get("SMTP_USER") or "").strip() or None
+    # Google displays app passwords as "abcd efgh ijkl mnop"; pasting that
+    # verbatim authenticates nowhere. Strip all whitespace rather than just
+    # trimming the ends, and do it here so every relay benefits.
+    password = re.sub(r"\s", "", os.environ.get("SMTP_PASSWORD") or "") or None
     from_addr = os.environ.get("SMTP_FROM") or "no-reply@classroom-observer.local"
     use_starttls = os.environ.get("SMTP_STARTTLS", "1").strip() != "0"
     if _singleton is not None:

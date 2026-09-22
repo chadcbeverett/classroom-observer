@@ -4490,11 +4490,21 @@ def health(request: Request) -> JSONResponse:
     if os.environ.get("SMTP_HOST", "").strip():
         from app import smtp_sender as _smtp_mod
         sender = _smtp_mod._singleton  # module-private read, no wrappers to update
-        if sender is not None and sender._thread is not None and sender._thread.is_alive():
-            checks["smtp"] = "ok"
-        else:
+        if sender is None or sender._thread is None or not sender._thread.is_alive():
             checks["smtp"] = "thread not alive"
             overall_ok = False
+        elif sender.consecutive_failures:
+            # Deliberately does NOT set overall_ok=False. A restart can revive a
+            # dead thread, so that case 503s and lets the orchestrator recycle
+            # us. Rejected credentials survive a restart, so 503-ing here would
+            # only produce a crash loop while the app still serves fine. Report
+            # the degradation; don't ask to be killed over it.
+            checks["smtp"] = (
+                f"delivering failed: {sender.consecutive_failures} consecutive "
+                f"failure(s); last: {sender.last_error}"
+            )
+        else:
+            checks["smtp"] = "ok"
 
     # Job worker liveness — always checked (worker is a hard dep of the
     # scoring pipeline). If the worker thread died, uploads queue but
