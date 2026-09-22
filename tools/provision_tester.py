@@ -74,6 +74,20 @@ def _clone_row(db, table, row, *, overrides, dry_run):
     return values["id"]
 
 
+def _mint_link(db: sqlite3.Connection, args, user_id: str) -> str:
+    """Insert a single-use magic-link token and return the URL to hand over."""
+    token = secrets.token_urlsafe(32)
+    now = datetime.now(timezone.utc)
+    db.execute(
+        "INSERT INTO magic_link_tokens(id, email, user_id, purpose, created_at, expires_at)"
+        " VALUES(?,?,?,?,?,?)",
+        (token, args.email, user_id, "signin", now.isoformat(),
+         (now + timedelta(minutes=args.link_minutes)).isoformat()),
+    )
+    db.commit()
+    return f"{args.base_url.rstrip('/')}/auth/{token}"
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -87,8 +101,18 @@ def main() -> None:
     ap.add_argument("--link-minutes", type=int, default=60, help="Magic-link TTL (default 60).")
     ap.add_argument("--force", action="store_true",
                     help="Clone again even if this tester already has teachers.")
+    ap.add_argument("--link-only", action="store_true",
+                    help="Mint a fresh sign-in link for an existing tester; clone nothing. "
+                         "Sign-in links are single-use, so this is the way to hand someone "
+                         "a replacement without touching their data.")
     ap.add_argument("--dry-run", action="store_true", help="Report what would happen; write nothing.")
     args = ap.parse_args()
+
+    # signin_submit lowercases what the user types and users.email has no
+    # case-insensitive collation, so an account stored with any capital letter
+    # can never be found at sign-in: the token is minted with user_id NULL and
+    # the link is dead on arrival, indistinguishable from an unknown address.
+    args.email = args.email.strip().lower()
 
     db = sqlite3.connect(args.db)
     db.row_factory = sqlite3.Row
@@ -96,6 +120,20 @@ def main() -> None:
     org = db.execute("SELECT id, name FROM organizations ORDER BY created_at ASC LIMIT 1").fetchone()
     if org is None:
         sys.exit("No organization exists. Run tools/onboard_district.py first.")
+
+    if args.link_only:
+        row = db.execute(
+            "SELECT id, name FROM users WHERE email=? AND org_id=?", (args.email, org["id"])
+        ).fetchone()
+        if row is None:
+            sys.exit(f"No account for {args.email}. Run without --link-only to create one.")
+        n = db.execute(
+            f"SELECT COUNT(*) FROM {LINK_TABLE} WHERE assigned_coach_user_id=?", (row["id"],)
+        ).fetchone()[0]
+        print(f"account: {row['name']} <{args.email}>  ({n} teachers)")
+        print(f"\nSign-in link (expires in {args.link_minutes} min):\n")
+        print(f"  {_mint_link(db, args, row['id'])}\n")
+        return
 
     # Resolve the template coach.
     if args.from_email:
@@ -188,18 +226,7 @@ def main() -> None:
                 if table == "observations":
                     observation_map[row["id"]] = new_id
 
-    link = None
-    if not args.dry_run:
-        token = secrets.token_urlsafe(32)
-        now = datetime.now(timezone.utc)
-        db.execute(
-            "INSERT INTO magic_link_tokens(id, email, user_id, purpose, created_at, expires_at)"
-            " VALUES(?,?,?,?,?,?)",
-            (token, args.email, tester_id, "signin", now.isoformat(),
-             (now + timedelta(minutes=args.link_minutes)).isoformat()),
-        )
-        db.commit()
-        link = f"{args.base_url.rstrip('/')}/auth/{token}"
+    link = None if args.dry_run else _mint_link(db, args, tester_id)
 
     print()
     print("cloned: " + ", ".join(f"{v} {k}" for k, v in counts.items()))
