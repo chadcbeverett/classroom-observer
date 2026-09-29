@@ -729,15 +729,31 @@
 {# ---- Full report body. Hidden entirely for teacher viewers (coach-only content). ---- #}
 {% if report_html and _viewer_role != 'teacher' %}
 {% if mode == 'debrief' %}
+{# Same structured report as review mode, still collapsed: during a debrief
+   the page should point at the conversation, not the analysis. Open it to
+   pull a specific quote into the room. #}
 <details class="deep-dive" style="margin-top: 12px;">
   <summary>
     <svg class="icon"><use href="#icon-lesson-plan"/></svg>
-    <span class="dd-title">The AI's full write-up (reference — just for you)</span>
+    <span class="dd-title">What the AI found, domain by domain (reference — just for you)</span>
   </summary>
   <div class="deep-dive-body">
+    {% if domain_assessments %}
+      {{ domain_report(domain_assessments, rubric) }}
+      <details class="deep-dive">
+        <summary>
+          <svg class="icon"><use href="#icon-lesson-plan"/></svg>
+          <span class="dd-title">The same write-up as continuous prose</span>
+        </summary>
+        <div class="deep-dive-body">
+          <article class="report-body">{{ report_html|safe }}</article>
+        </div>
+      </details>
+    {% else %}
     <article class="report-body">
       {{ report_html|safe }}
     </article>
+    {% endif %}
   </div>
 </details>
 {% else %}
