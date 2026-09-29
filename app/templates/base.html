@@ -70,12 +70,21 @@
         <svg class="icon brand-icon"><use href="#icon-sparkle"/></svg>
         Classroom Observer
       </a>
+      {# Nav declared as data so the active-state rule is written once. "/" has
+         to match exactly -- as a prefix it would light up on every page. #}
+      {%- set _path = request.url.path %}
+      {%- set _nav = [
+        ('/', 'icon-dashboard', 'Dashboard', true),
+        ('/teachers', 'icon-teachers', 'Teachers', false),
+        ('/observations', 'icon-observations', 'Observations', false),
+        ('/lesson-plans', 'icon-lesson-plan', 'Lesson plans', false),
+        ('/admin/district-context', 'icon-district', 'District', false),
+      ] %}
       <nav>
-        <a href="/"><svg class="icon"><use href="#icon-dashboard"/></svg>Dashboard</a>
-        <a href="/teachers"><svg class="icon"><use href="#icon-teachers"/></svg>Teachers</a>
-        <a href="/observations"><svg class="icon"><use href="#icon-observations"/></svg>Observations</a>
-        <a href="/lesson-plans"><svg class="icon"><use href="#icon-lesson-plan"/></svg>Lesson plans</a>
-        <a href="/admin/district-context"><svg class="icon"><use href="#icon-district"/></svg>District</a>
+        {%- for _href, _icon, _label, _exact in _nav %}
+        {%- set _active = (_path == _href) if _exact else (_path == _href or _path.startswith(_href ~ '/')) %}
+        <a href="{{ _href }}"{% if _active %} class="is-active" aria-current="page"{% endif %}><svg class="icon"><use href="#{{ _icon }}"/></svg>{{ _label }}</a>
+        {%- endfor %}
       </nav>
       {% set _v = request.state.viewer if request.state and request.state.viewer else {'role':'anon'} %}
       <div class="viewer-chip {{ 'as-teacher' if _v.role == 'teacher' }}{{ ' as-principal' if _v.role == 'principal' }}{{ ' as-district' if _v.role == 'district' }}">
