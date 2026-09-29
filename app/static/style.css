@@ -3067,3 +3067,107 @@ h2 {
 }
 
 .table-card > table { min-width: 620px; }
+
+/* ===========================================================================
+   Dashboard: openings tiers, and the empty "moves are landing" slot
+   =========================================================================== */
+
+/* The openings list already ordered itself by urgency, but rendered all eight
+   groups in the same warm row, so eight items read as one undifferentiated
+   block. Tier headings restore the rhythm the ordering always implied. */
+.attention-tier-head {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 4px 0 8px;
+}
+
+.attention-list + .attention-tier-head { margin-top: 18px; }
+
+/* Lower tier recedes: same information, less pull. Without this the "when you
+   get to it" items compete with work that is actually owed today. */
+.attention-list--quiet .attention-item {
+  background: transparent;
+  border-color: var(--border);
+}
+
+.attention-list--quiet .attention-item .title { font-weight: 600; }
+.attention-list--quiet .attention-item:hover { background: var(--accent-tint); }
+
+/* The KPI must not stretch to match the openings list. Under align-items:
+   stretch a long list made this card arbitrarily tall — the emptier the app,
+   the bigger the empty box. */
+.dash-split > .kpi-placeholder,
+.dash-split > .hero-kpi { align-self: start; }
+
+.kpi-placeholder {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px 22px;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.kpi-placeholder .kpi-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.kpi-placeholder__body {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--fg);
+}
+
+.kpi-placeholder__cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.kpi-placeholder__cta:hover { text-decoration: underline; }
+
+/* A metric that has never been recorded is not the number zero. Rendering it
+   at full weight made a brand-new account look like a failing one. */
+.stat-strip .stat-value.is-zero { color: var(--muted); font-weight: 600; }
+
+/* Rubric distribution: real mark colours, not chip backgrounds.
+   The segments were filled with the pale --rating-*-bg tints, which are built
+   to sit behind dark text in a chip. As the mark itself they washed out, so
+   four levels read as two. These are the same validated fills the profile
+   bars use, with a surface gap so adjacent segments stay countable. */
+.domain-bar-track { display: flex; gap: 2px; background: var(--rubric-track); }
+
+.domain-bar-segment {
+  color: #fff;
+  font-weight: 700;
+  font-size: 12px;
+  text-align: center;
+  line-height: 26px;
+  min-width: 0;
+}
+
+.domain-bar-segment--1 { background: var(--rubric-1); }
+.domain-bar-segment--2 { background: var(--rubric-2); }
+.domain-bar-segment--3 { background: var(--rubric-3); }
+.domain-bar-segment--4 { background: var(--rubric-4); }
+
+.domain-bar-segment:first-child { border-radius: 4px 0 0 4px; }
+.domain-bar-segment:last-child { border-radius: 0 4px 4px 0; }
+.domain-bar-segment:only-child { border-radius: 4px; }

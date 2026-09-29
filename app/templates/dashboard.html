@@ -30,6 +30,9 @@
         <div>Nothing waiting. You're caught up.</div>
       </div>
     {% else %}
+    {% set tier_now = attention_responses|length + attention_debriefs|length + attention_actions|length %}
+    {% set tier_later = attention_total - tier_now %}
+    {% if tier_now and tier_later %}<div class="attention-tier-head">Waiting on you</div>{% endif %}
     <ul class="attention-list">
       {# Teacher responses first — the conversation is already going. #}
       {% for r in attention_responses %}
@@ -78,6 +81,9 @@
         </li>
       {% endfor %}
 
+    </ul>
+    {% if tier_now and tier_later %}<div class="attention-tier-head">When you get to it</div>{% endif %}
+    <ul class="attention-list attention-list--quiet">
       {% for r in attention_cycles %}
         <li>
           <a class="attention-item blue" href="/cycles/{{ r.cycle_id }}">
@@ -163,25 +169,41 @@
   {% else %}
     {% set kpi_class = 'hero-kpi dim' %}
   {% endif %}
+  {% if implementation_rate is not none %}
   <div class="{{ kpi_class }}">
     <div class="kpi-label">
       <svg class="icon icon-sm"><use href="#icon-trend-up"/></svg>
       How the moves are landing
     </div>
     <div>
-      <div class="kpi-value {{ 'small' if implementation_rate is none }}">
-        {% if implementation_rate is not none %}{{ implementation_rate }}%{% else %}—{% endif %}
-      </div>
+      <div class="kpi-value">{{ implementation_rate }}%</div>
       <div class="kpi-sub">
-        {% if assessed_actions %}
-          You've read {{ assessed_actions }} of the {{ total_actions }} moves you've named<br>
-          Sticking full: {% if success_rate is not none %}{{ success_rate }}%{% else %}—{% endif %}
-        {% else %}
-          Nothing to read yet
-        {% endif %}
+        You've read {{ assessed_actions }} of the {{ total_actions }} moves you've named<br>
+        Sticking full: {% if success_rate is not none %}{{ success_rate }}%{% else %}—{% endif %}
       </div>
     </div>
   </div>
+  {% else %}
+  {# No moves assessed yet. A dark full-height KPI here rendered as a tall
+     black void holding the words "Nothing to read yet" — the largest element
+     on a new coach's first screen, saying nothing. Until there is a rate to
+     show, this explains what will fill it and points at the step that
+     produces the first number. #}
+  <div class="kpi-placeholder">
+    <div class="kpi-label">
+      <svg class="icon icon-sm"><use href="#icon-trend-up"/></svg>
+      How the moves are landing
+    </div>
+    <p class="kpi-placeholder__body">
+      Once you've named a move with a teacher and come back to notice how it
+      landed, the share that stuck shows up here.
+    </p>
+    <a class="kpi-placeholder__cta" href="/teachers">
+      Start with a teacher
+      <svg class="icon icon-sm"><use href="#icon-arrow-right"/></svg>
+    </a>
+  </div>
+  {% endif %}
 </section>
 
 {# ---- Recent teachers ---- #}
@@ -208,24 +230,24 @@
 <section class="stat-strip">
   <div class="stat-card">
     <div class="stat-label"><svg class="icon"><use href="#icon-teachers"/></svg>Teachers</div>
-    <div class="stat-value">{{ teacher_count }}</div>
+    <div class="stat-value {{ 'is-zero' if not teacher_count }}">{{ teacher_count }}</div>
   </div>
   <div class="stat-card">
     <div class="stat-label"><svg class="icon"><use href="#icon-observations"/></svg>Observations</div>
-    <div class="stat-value">{{ obs_counts.total }}</div>
+    <div class="stat-value {{ 'is-zero' if not obs_counts.total }}">{{ obs_counts.total }}</div>
     <div class="stat-sub">{{ obs_counts.complete }} closed · {{ obs_counts.in_flight }} still working</div>
   </div>
   <div class="stat-card">
     <div class="stat-label"><svg class="icon"><use href="#icon-cycle"/></svg>Cycles open</div>
-    <div class="stat-value">{{ active_cycle_count }}</div>
+    <div class="stat-value {{ 'is-zero' if not active_cycle_count }}">{{ active_cycle_count }}</div>
   </div>
   <div class="stat-card">
     <div class="stat-label"><svg class="icon"><use href="#icon-goal"/></svg>Goals in play</div>
-    <div class="stat-value">{{ active_goal_count }}</div>
+    <div class="stat-value {{ 'is-zero' if not active_goal_count }}">{{ active_goal_count }}</div>
   </div>
   <div class="stat-card">
     <div class="stat-label"><svg class="icon"><use href="#icon-action"/></svg>Moves named</div>
-    <div class="stat-value">{{ total_actions }}</div>
+    <div class="stat-value {{ 'is-zero' if not total_actions }}">{{ total_actions }}</div>
     <div class="stat-sub">{{ total_actions - assessed_actions }} still to notice</div>
   </div>
 </section>
@@ -234,6 +256,13 @@
 <section class="card">
   <h2><svg class="icon"><use href="#icon-goal"/></svg>Where teachers are on the rubric</h2>
   <p class="muted small" style="margin-top: -4px;">Across every scored observation.</p>
+  <div class="rubric-legend" style="margin: 10px 0 14px;">
+    {%- for lvl in rating_levels %}
+    <span class="rubric-legend__item">
+      <span class="rubric-legend__swatch rubric-legend__swatch--{{ loop.index }}"></span>{{ lvl }}
+    </span>
+    {%- endfor %}
+  </div>
   {% for domain in domains %}
     {% set counts = rating_counts.get(domain, {}) %}
     {% set n = counts.values() | sum %}
@@ -246,7 +275,7 @@
           {% for lvl in rating_levels %}
             {% set c = counts.get(lvl, 0) %}
             {% if c %}
-            <div class="domain-bar-segment rating-{{ lvl|replace(' ', '-')|lower }}"
+            <div class="domain-bar-segment domain-bar-segment--{{ loop.index }}"
                  style="width: {{ (c / n * 100)|round(1) }}%"
                  title="{{ lvl }}: {{ c }} rating{{ 's' if c != 1 }}">
               {{ c }}
