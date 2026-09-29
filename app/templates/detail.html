@@ -729,10 +729,10 @@
 {# ---- Full report body. Hidden entirely for teacher viewers (coach-only content). ---- #}
 {% if report_html and _viewer_role != 'teacher' %}
 {% if mode == 'debrief' %}
-{# Same structured report as review mode, still collapsed: during a debrief
-   the page should point at the conversation, not the analysis. Open it to
-   pull a specific quote into the room. #}
-<details class="deep-dive" style="margin-top: 12px;">
+{# Same structured report as review mode, and open by default: a coach in a
+   debrief wants the evidence in reach, not one click away. Collapsible so it
+   can be folded once the conversation has what it needs. #}
+<details class="deep-dive" open style="margin-top: 12px;">
   <summary>
     <svg class="icon"><use href="#icon-lesson-plan"/></svg>
     <span class="dd-title">What the AI found, domain by domain (reference — just for you)</span>
