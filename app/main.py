@@ -12,6 +12,7 @@ Environment:
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sqlite3
@@ -922,6 +923,25 @@ TEMPLATES.env.globals["current_role"] = lambda request: getattr(
 def _avatar_idx(name: str) -> int:
     """Deterministic 0-5 palette index for coloring an avatar by name."""
     return sum(ord(c) for c in (name or "")) % 6
+
+
+def _asset_version(path: Path) -> str:
+    """Short content hash for a static file, used to bust browser caches.
+
+    Without it, /static/style.css is a stable URL that browsers keep serving
+    from cache across deploys: a coach with the app already open gets the new
+    HTML against the old stylesheet, which renders as a half-styled page with
+    no error anywhere. Hashing content rather than mtime means an unchanged
+    file keeps its cache entry through a redeploy.
+    """
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+    except OSError:
+        return "dev"
+
+
+# Computed once at import: static files do not change under a running process.
+TEMPLATES.env.globals["asset_version"] = _asset_version(APP_ROOT / "static" / "style.css")
 
 
 def _rubric_score(rubric, rating) -> int:
