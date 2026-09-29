@@ -26,6 +26,18 @@
   --radius: 8px;
   --radius-sm: 4px;
 
+  /* Saturated bar fills for the rubric-profile chart. Distinct from the pale
+     --rating-*-bg chips: a chip sits behind text and must stay light, a bar is
+     the mark itself and must hold its own against the card surface.
+     Validated for colorblind separation — worst adjacent pair (2↔1) is
+     deutan dE 11.5 / normal dE 15.0, both above the required floors. Re-run
+     the check before changing any of these four. */
+  --rubric-1: #b5372a;   /* Ineffective */
+  --rubric-2: #c07818;   /* Minimally Effective */
+  --rubric-3: #2f5aa8;   /* Developing */
+  --rubric-4: #3f8a43;   /* Effective */
+  --rubric-track: rgba(26, 26, 26, 0.07);
+
   --rating-effective-bg: #d7ecd8;
   --rating-effective-fg: #1c4d1e;
   --rating-developing-bg: #dee8f5;
@@ -2796,3 +2808,262 @@ details.goal-close-form > summary {
   border-bottom: 1px dashed var(--border);
   margin-top: 8px;
 }
+
+/* ===========================================================================
+   Rubric profile — the shape of a teacher's practice across rubric domains
+   ===========================================================================
+   One bar per domain, in rubric order. Bar HEIGHT carries the level (1..4),
+   so the reading survives a colorblind viewer, a greyscale print, and a
+   forced-colors mode; the fill colour reinforces it rather than carrying it
+   alone. Every bar also exposes "<domain> — <level>" via title, and the
+   visible legend names all four levels.
+
+   The track behind each fill matters: without it a level-1 bar and a missing
+   bar look identical. The track is the full 1..4 range, so a short bar reads
+   as "low on a 4-point scale" instead of "some small number".
+   ========================================================================= */
+
+:root {
+  --rubric-bar-w: 13px;
+  --rubric-bar-gap: 3px;
+}
+
+.rubric-profile {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: var(--rubric-bar-gap);     /* surface gap between adjacent marks */
+  line-height: 0;
+}
+
+.rubric-profile__bar {
+  width: var(--rubric-bar-w);
+  height: 40px;
+  background: var(--rubric-track);
+  border-radius: 2px;
+  display: flex;
+  align-items: flex-end;          /* fills grow from the baseline */
+  overflow: hidden;
+}
+
+.rubric-profile__fill {
+  width: 100%;
+  border-radius: 4px 4px 0 0;     /* rounded data-end, square at the baseline */
+  transition: height 120ms ease-out;
+}
+
+.rubric-profile__fill--1 { height: 25%;  background: var(--rubric-1); }
+.rubric-profile__fill--2 { height: 50%;  background: var(--rubric-2); }
+.rubric-profile__fill--3 { height: 75%;  background: var(--rubric-3); }
+.rubric-profile__fill--4 { height: 100%; background: var(--rubric-4); }
+
+/* Unscored domain: a dashed, empty track. Reads as "no read yet", which is a
+   different statement from "scored at the bottom of the scale". */
+.rubric-profile__bar--empty {
+  background: transparent;
+  border: 1px dashed var(--border-strong);
+  border-radius: 2px;
+}
+
+/* Larger variant for pages with room to name things: teacher hub, observation
+   header. Bars run horizontally so each can carry its domain and level label. */
+.rubric-profile-full {
+  display: grid;
+  gap: 6px;
+}
+
+.rubric-profile-full__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.rubric-profile-full__label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  margin-bottom: 3px;
+}
+
+.rubric-profile-full__track {
+  height: 8px;
+  background: var(--rubric-track);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.rubric-profile-full__fill {
+  height: 100%;
+  border-radius: 0 4px 4px 0;
+}
+
+.rubric-profile-full__fill--1 { width: 25%;  background: var(--rubric-1); }
+.rubric-profile-full__fill--2 { width: 50%;  background: var(--rubric-2); }
+.rubric-profile-full__fill--3 { width: 75%;  background: var(--rubric-3); }
+.rubric-profile-full__fill--4 { width: 100%; background: var(--rubric-4); }
+
+.rubric-profile-full__value {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg);
+  white-space: nowrap;
+  min-width: 118px;
+  text-align: right;
+}
+
+/* Legend. Present whenever profiles are on the page — identity is never left
+   to colour alone. */
+.rubric-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.rubric-legend__item { display: inline-flex; align-items: center; gap: 5px; }
+
+.rubric-legend__swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  flex: none;
+}
+
+.rubric-legend__swatch--1 { background: var(--rubric-1); }
+.rubric-legend__swatch--2 { background: var(--rubric-2); }
+.rubric-legend__swatch--3 { background: var(--rubric-3); }
+.rubric-legend__swatch--4 { background: var(--rubric-4); }
+
+/* Domain initials under the compact profile. Redundant with the tooltip by
+   design — a tooltip is unreachable on touch. */
+.rubric-profile-cell { display: inline-grid; gap: 4px; justify-items: start; }
+
+/* Domain axis. Lives once in the column header rather than repeating under
+   every row — the domain order is fixed, so repeating it four times per row
+   was noise. Widths are token-driven so the labels sit over their bars. */
+.rubric-profile__keys {
+  display: flex;                  /* own line under the column label */
+  margin-top: 6px;
+  gap: var(--rubric-bar-gap);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  line-height: 1;
+}
+
+.rubric-profile__keys span {
+  width: var(--rubric-bar-w);
+  text-align: center;
+  letter-spacing: 0;              /* thead's tracking would push it off its bar */
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rubric-profile__fill { transition: none; }
+}
+
+/* ---------------------------------------------------------------------------
+   Type scale. The previous ramp ran 15 / 16 / 18 / 24, so a page title was
+   barely a step above body copy and every page opened flat. Widening the top
+   of the scale gives each page an anchor without touching body legibility.
+   ------------------------------------------------------------------------- */
+h1 {
+  font-size: 30px;
+  line-height: 1.15;
+  letter-spacing: -0.021em;
+  font-weight: 700;
+}
+
+h2 {
+  font-size: 21px;
+  line-height: 1.25;
+  letter-spacing: -0.012em;
+}
+
+.page-header > div > .muted { font-size: 14px; }
+
+/* Legend belongs on its own line under the count, not wedged beside it. */
+.page-header-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+/* ---------------------------------------------------------------------------
+   Roster table rhythm. Row-level actions were competing with the data: four
+   saturated buttons pulled the eye straight down the last column, away from
+   the profiles that carry the meaning. The action recedes until the row is
+   hovered, which is where the intent to click actually forms.
+   ------------------------------------------------------------------------- */
+.row-list td { padding-top: 14px; padding-bottom: 14px; vertical-align: middle; }
+
+.row-list thead th {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding-bottom: 10px;
+}
+
+.row-list tbody tr { transition: background-color 90ms ease-out; }
+.row-list tbody tr:hover { background: var(--accent-tint); }
+
+.row-list .button-link {
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--border-strong);
+  font-weight: 600;
+}
+
+.row-list tbody tr:hover .button-link {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: var(--accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .row-list tbody tr, .row-list .button-link { transition: none; }
+}
+
+/* Observation header: the rubric read, given a card of its own.
+   Four flat colour blocks stated the levels but showed no relationship
+   between them; as a labelled profile the shape of the lesson is legible in
+   one pass, and the weakest domain is visible without reading. */
+.rubric-read-card { margin: 16px 0; }
+
+.rubric-read-card__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.rubric-read-card__title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0;
+}
+
+/* Tables scroll rather than clip. The card previously used overflow:hidden to
+   keep the table's corners inside the card radius, which also silently cut off
+   any column past the card's width — on a phone the rubric profile simply
+   vanished. auto keeps the corner clipping and lets narrow screens reach the
+   rest of the row. */
+.table-card {
+  padding: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
+.table-card > table { min-width: 620px; }

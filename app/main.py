@@ -924,6 +924,22 @@ def _avatar_idx(name: str) -> int:
     return sum(ord(c) for c in (name or "")) % 6
 
 
+def _rubric_score(rubric, rating) -> int:
+    """1..4 for a rating label, 0 when absent or unrecognized.
+
+    Templates size the rubric-profile bars from this. rubric.score_for raises
+    on an unknown label, and a rating that predates a rubric edit would take a
+    whole page down with it; a zero renders as the "not yet read" empty track.
+    """
+    if not rating:
+        return 0
+    try:
+        return rubric.score_for(rating)
+    except Exception:
+        return 0
+
+
+TEMPLATES.env.globals["rubric_score"] = _rubric_score
 TEMPLATES.env.globals["avatar_idx"] = _avatar_idx
 TEMPLATES.env.globals["avatar_palette"] = ["blue", "teal", "amber", "plum", "green", "rose"]
 TEMPLATES.env.globals["DEV_LOGIN_ENABLED"] = DEV_LOGIN_ENABLED
@@ -1690,6 +1706,8 @@ def observation_detail(request: Request, observation_id: str) -> HTMLResponse:
             "deleted_at": _fmt_ts(obs["deleted_at"]) if obs["deleted_at"] else None,
         },
         "ratings": ratings,
+        "rubric": rubric,
+        "domains": rubric.domains,
         "domain_assessments": domain_assessments,
         "coaching_recommendations": coaching_recommendations,
         "highest_leverage_move": highest_leverage_move,

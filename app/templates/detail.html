@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_rubric.html" import rubric_profile_full, rubric_legend %}
 {% block title %}{{ obs.teacher }} · Observation · Classroom Observer{% endblock %}
 {% block content %}
 
@@ -192,14 +193,13 @@
   </div>
 </details>
 {% else %}
-<div class="score-strip">
-  {% for domain, rating in ratings.items() %}
-  <div class="score-pill rating-{{ rating|replace(' ', '-')|lower }}">
-    <span class="score-domain">{{ domain }}</span>
-    <span class="score-rating">{{ rating }}</span>
+<section class="card rubric-read-card">
+  <div class="rubric-read-card__head">
+    <h2 class="rubric-read-card__title">How the rubric read this lesson</h2>
+    {{ rubric_legend(rubric) }}
   </div>
-  {% endfor %}
-</div>
+  {{ rubric_profile_full(ratings, domains, rubric) }}
+</section>
 {% endif %}
 {% endif %}
 

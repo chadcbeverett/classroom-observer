@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_rubric.html" import rubric_profile, rubric_legend %}
 {% block title %}{% if show_archived %}Archived teachers{% else %}Teachers{% endif %} · Classroom Observer{% endblock %}
 {% block content %}
 
@@ -14,6 +15,7 @@
   </div>
   <div class="page-header-meta">
     <span class="count-chip">{{ teachers|length }} teacher{{ 's' if teachers|length != 1 }}</span>
+    {% if not show_archived and teachers %}{{ rubric_legend(rubric) }}{% endif %}
   </div>
 </div>
 
@@ -62,7 +64,7 @@
     {% endif %}
   </div>
 {% else %}
-<section class="card" style="padding: 0; overflow: hidden;">
+<section class="card table-card">
 <table class="obs-table row-list">
   <thead>
     <tr>
@@ -73,9 +75,12 @@
       {% if show_archived %}
         <th>Archived on</th>
       {% else %}
-        {% for d in domains %}
-        <th title="{{ d }}">{{ d.split(' ')[0][:3]|upper }}</th>
-        {% endfor %}
+        <th>
+          Rubric profile
+          <span class="rubric-profile__keys">
+            {%- for d in domains %}<span title="{{ d }}">{{ d[:1]|upper }}</span>{% endfor -%}
+          </span>
+        </th>
         <th>Goals</th>
         <th>Moves</th>
       {% endif %}
@@ -101,19 +106,9 @@
           </form>
         </td>
       {% else %}
-        {% for d in domains %}
-          {% set td = t.trend_by_domain[d] %}
-          <td>
-            {% if td.rating %}
-              <span class="rating rating-{{ td.rating|replace(' ', '-')|lower }}">{{ td.rating[:3]|upper }}</span>
-              <span class="trend trend-{{ td.trend }}">
-                {%- if td.trend == 'up' %}↑{% elif td.trend == 'down' %}↓{% elif td.trend == 'flat' %}·{% endif -%}
-              </span>
-            {% else %}
-              <span class="muted small">—</span>
-            {% endif %}
-          </td>
-        {% endfor %}
+        {% set ratings = {} %}
+        {% for d in domains %}{% set _ = ratings.update({d: t.trend_by_domain[d].rating}) %}{% endfor %}
+        <td>{{ rubric_profile(ratings, domains, rubric, keys=False) }}</td>
         <td>{{ t.active_goal_count }}</td>
         <td>{{ t.open_action_count }}</td>
         <td><a class="button-link" href="/teachers/{{ t.id }}">Open</a></td>

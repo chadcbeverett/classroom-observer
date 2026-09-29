@@ -1,0 +1,71 @@
+{# Rubric profile macros.
+
+   Bar length carries the level, colour reinforces it, and every bar names its
+   domain and level in text — so the chart still reads without colour, without
+   hover, and in greyscale. Import with:
+
+     {% from "_rubric.html" import rubric_profile, rubric_profile_full, rubric_legend %}
+#}
+
+{# Compact 4-bar profile for dense contexts (roster rows).
+   `ratings` maps domain -> rating label (or None). #}
+{% macro rubric_profile(ratings, domains, rubric, keys=True) -%}
+<span class="rubric-profile-cell">
+  <span class="rubric-profile" role="img"
+        aria-label="Rubric profile. {% for d in domains %}{{ d }}: {{ ratings.get(d) or 'not yet read' }}{{ '. ' if not loop.last }}{% endfor %}">
+    {%- for d in domains %}
+      {%- set rating = ratings.get(d) %}
+      {%- set score = rubric_score(rubric, rating) if rating else 0 %}
+      {%- if score %}
+    <span class="rubric-profile__bar" title="{{ d }} — {{ rating }}">
+      <span class="rubric-profile__fill rubric-profile__fill--{{ score }}"></span>
+    </span>
+      {%- else %}
+    <span class="rubric-profile__bar rubric-profile__bar--empty" title="{{ d }} — not yet read"></span>
+      {%- endif %}
+    {%- endfor %}
+  </span>
+  {%- if keys %}
+  <span class="rubric-profile__keys" aria-hidden="true">
+    {%- for d in domains %}<span>{{ d[:1]|upper }}</span>{% endfor -%}
+  </span>
+  {%- endif %}
+</span>
+{%- endmacro %}
+
+{# Labelled horizontal profile for pages with room: teacher hub, observation
+   header. Names each domain and its level outright. #}
+{% macro rubric_profile_full(ratings, domains, rubric) -%}
+<div class="rubric-profile-full">
+  {%- for d in domains %}
+    {%- set rating = ratings.get(d) %}
+    {%- set score = rubric_score(rubric, rating) if rating else 0 %}
+  <div>
+    <div class="rubric-profile-full__label">{{ d }}</div>
+    <div class="rubric-profile-full__row">
+      <div class="rubric-profile-full__track">
+        {%- if score %}
+        <div class="rubric-profile-full__fill rubric-profile-full__fill--{{ score }}"></div>
+        {%- endif %}
+      </div>
+      <div class="rubric-profile-full__value">
+        {%- if score %}{{ rating }} <span class="muted">({{ score }}/{{ rubric.num_levels }})</span>
+        {%- else %}<span class="muted">Not yet read</span>{% endif -%}
+      </div>
+    </div>
+  </div>
+  {%- endfor %}
+</div>
+{%- endmacro %}
+
+{# Legend. Include wherever profiles appear, so level identity never rests on
+   colour alone. #}
+{% macro rubric_legend(rubric) -%}
+<div class="rubric-legend">
+  {%- for level in rubric.rating_levels %}
+  <span class="rubric-legend__item">
+    <span class="rubric-legend__swatch rubric-legend__swatch--{{ loop.index }}"></span>{{ level }}
+  </span>
+  {%- endfor %}
+</div>
+{%- endmacro %}
