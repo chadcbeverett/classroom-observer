@@ -1,0 +1,99 @@
+{# Structured observation report.
+
+   The scorer returns a full object per domain — essential question, the
+   verbatim rubric descriptor, what was observed, distance from target, and
+   per-sub-descriptor evidence carrying a timestamp and a direct quote. All of
+   it was being flattened into one markdown blob and rendered as prose, so the
+   evidence — the part that lets a coach check the AI's reasoning against the
+   lesson — was the hardest thing on the page to find.
+
+   Everything here is AI-produced text rendered through Jinja's autoescaping.
+   Do not add |safe: unlike the markdown path, which needs bleach to make it
+   safe, these fields are escaped by default and should stay that way.
+#}
+
+{% macro evidence_list(items) -%}
+<ul class="ev-list">
+  {%- for e in items %}
+  <li class="ev-item">
+    <span class="ev-ts">{{ e.timestamp or '—' }}</span>
+    <span class="ev-body">
+      <span class="ev-quote">{{ e.quote_or_description }}</span>
+      {%- if e.source %}<span class="ev-src ev-src--{{ e.source }}">{{ e.source }}</span>{% endif %}
+    </span>
+  </li>
+  {%- endfor %}
+</ul>
+{%- endmacro %}
+
+{% macro domain_report(das, rubric) -%}
+{%- for d in das %}
+{%- set score = rubric_score(rubric, d.overall_rating) %}
+<section class="da-card">
+  <header class="da-head">
+    <div class="da-head__main">
+      <h3 class="da-title">{{ d.domain }}</h3>
+      {%- if d.essential_question %}
+      <p class="da-eq">{{ d.essential_question }}</p>
+      {%- endif %}
+    </div>
+    <div class="da-head__rating">
+      <span class="da-rating-label">{{ d.overall_rating }}</span>
+      {%- if score %}
+      <span class="da-rating-bar" role="img"
+            aria-label="{{ d.overall_rating }}, {{ score }} of {{ rubric.num_levels }}">
+        {%- for i in range(1, rubric.num_levels + 1) %}
+        <span class="da-rating-pip{{ ' is-on da-rating-pip--' ~ score if i <= score }}"></span>
+        {%- endfor %}
+      </span>
+      <span class="da-rating-score">{{ score }}/{{ rubric.num_levels }}</span>
+      {%- endif %}
+    </div>
+  </header>
+
+  {%- if d.rubric_descriptor_text %}
+  <blockquote class="da-rubric">
+    <span class="da-rubric__label">Rubric, at {{ d.overall_rating }}</span>
+    {{ d.rubric_descriptor_text }}
+  </blockquote>
+  {%- endif %}
+
+  {%- if d.what_was_observed %}
+  <p class="da-observed">{{ d.what_was_observed }}</p>
+  {%- endif %}
+
+  {%- if d.preponderance_summary %}
+  <p class="da-preponderance">{{ d.preponderance_summary }}</p>
+  {%- endif %}
+
+  {%- if d.descriptor_scores %}
+  <div class="ds-group">
+    {%- for ds in d.descriptor_scores %}
+    {%- set ds_score = rubric_score(rubric, ds.rating) %}
+    <div class="ds-row">
+      <div class="ds-row__head">
+        <span class="ds-name">{{ ds.descriptor }}</span>
+        {%- if ds.rating %}
+        <span class="ds-rating ds-rating--{{ ds_score or 0 }}">{{ ds.rating }}</span>
+        {%- endif %}
+      </div>
+      {%- if ds.rationale %}
+      <p class="ds-rationale">{{ ds.rationale }}</p>
+      {%- endif %}
+      {%- if ds.evidence %}
+      {{ evidence_list(ds.evidence) }}
+      {%- endif %}
+    </div>
+    {%- endfor %}
+  </div>
+  {%- endif %}
+
+  {%- if d.distance_from_target %}
+  <p class="da-target">
+    <span class="da-target__label">To move up</span>
+    {{ d.distance_from_target }}
+  </p>
+  {%- endif %}
+</section>
+{%- endfor %}
+{%- endmacro %}

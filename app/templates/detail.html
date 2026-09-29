@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_rubric.html" import rubric_profile_full, rubric_legend %}
+{% from "_report.html" import domain_report %}
 {% block title %}{{ obs.teacher }} · Observation · Classroom Observer{% endblock %}
 {% block content %}
 
@@ -741,11 +742,27 @@
 </details>
 {% else %}
 <div class="section-title-row">
-  <h2><svg class="icon"><use href="#icon-lesson-plan"/></svg>The AI's full write-up</h2>
+  <h2><svg class="icon"><use href="#icon-lesson-plan"/></svg>What the AI found, domain by domain</h2>
 </div>
+{% if domain_assessments %}
+  {{ domain_report(domain_assessments, rubric) }}
+  {# The markdown write-up says the same things in prose. Kept, because it
+     reads as a narrative and some coaches prefer that, but no longer the
+     only way to reach the evidence. #}
+  <details class="deep-dive">
+    <summary>
+      <svg class="icon"><use href="#icon-lesson-plan"/></svg>
+      <span class="dd-title">The same write-up as continuous prose</span>
+    </summary>
+    <div class="deep-dive-body">
+      <article class="report-body">{{ report_html|safe }}</article>
+    </div>
+  </details>
+{% else %}
 <article class="report-body">
   {{ report_html|safe }}
 </article>
+{% endif %}
 {% endif %}
 {% elif obs.status == 'complete' and _viewer_role != 'teacher' %}
 <p class="muted">No write-up on file for this observation.</p>

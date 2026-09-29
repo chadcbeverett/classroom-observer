@@ -3242,3 +3242,212 @@ header .wrap { flex-wrap: wrap; }
 .viewer-chip { margin-left: 0; }
 header .wrap { gap: 12px; }
 nav a { padding-left: 8px; padding-right: 8px; }
+
+/* ===========================================================================
+   Structured observation report
+   ===========================================================================
+   One card per rubric domain. The scanning order is deliberate: rating first
+   (what did it decide), rubric text second (against what standard), observed
+   third (on what basis), evidence last but visually loudest (can I check it).
+   ========================================================================= */
+
+.da-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px 22px;
+  margin: 0 0 14px;
+  box-shadow: var(--shadow);
+}
+
+.da-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.da-head__main { min-width: 0; flex: 1 1 260px; }
+
+.da-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.da-eq {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.da-head__rating {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.da-rating-label { font-size: 13px; font-weight: 700; }
+
+/* Pips rather than a bar: at a glance it reads as "3 of 4 steps", and the
+   step count stays countable without reading the number beside it. */
+.da-rating-bar { display: inline-flex; gap: 3px; }
+
+.da-rating-pip {
+  width: 16px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--rubric-track);
+}
+
+.da-rating-pip--1.is-on { background: var(--rubric-1); }
+.da-rating-pip--2.is-on { background: var(--rubric-2); }
+.da-rating-pip--3.is-on { background: var(--rubric-3); }
+.da-rating-pip--4.is-on { background: var(--rubric-4); }
+
+.da-rating-score { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* Verbatim rubric language, visually separated from the AI's own prose so a
+   coach can always tell which words are the instrument's and which are the
+   model's. */
+.da-rubric {
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  background: var(--bg);
+  border-left: 3px solid var(--border-strong);
+  border-radius: 0 8px 8px 0;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.da-rubric__label {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 5px;
+}
+
+.da-observed { margin: 0 0 10px; line-height: 1.6; }
+
+.da-preponderance {
+  margin: 0 0 14px;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.ds-group { display: grid; gap: 10px; margin-bottom: 14px; }
+
+.ds-row {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: var(--bg);
+}
+
+.ds-row__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.ds-name { font-weight: 700; font-size: 14px; }
+
+.ds-rating {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 10px;
+  color: #fff;
+  white-space: nowrap;
+}
+
+.ds-rating--1 { background: var(--rubric-1); }
+.ds-rating--2 { background: var(--rubric-2); }
+.ds-rating--3 { background: var(--rubric-3); }
+.ds-rating--4 { background: var(--rubric-4); }
+.ds-rating--0 { background: var(--muted); }
+
+.ds-rationale {
+  margin: 0 0 10px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--fg);
+}
+
+/* Evidence. The reason to trust or challenge any of this, so it gets the
+   strongest treatment in the card. */
+.ev-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+
+.ev-item {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 7px 10px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.ev-ts {
+  font-family: "SF Mono", ui-monospace, Menlo, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent-deep);
+  background: var(--accent-tint);
+  padding: 2px 6px;
+  border-radius: 4px;
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.ev-body { min-width: 0; font-size: 13px; line-height: 1.5; }
+.ev-quote { color: var(--fg); }
+
+.ev-src {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 4px;
+  vertical-align: 1px;
+}
+
+.da-target {
+  margin: 0;
+  padding: 11px 14px;
+  background: var(--accent-tint);
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.da-target__label {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--accent-deep);
+  margin-bottom: 4px;
+}
+
+@media (max-width: 560px) {
+  .da-card { padding: 16px; }
+  .ev-item { flex-direction: column; gap: 4px; }
+  .ev-ts { align-self: flex-start; }
+}
