@@ -376,4 +376,53 @@ def spec_to_rubric(spec: "RubricSpec", rubric_id: str):
             d.name: [s.name for s in d.sub_descriptors] for d in spec.domains
         },
         rubric_text=_render_rubric_text(spec),
+        content_hash=spec.content_hash(),
+        aggregation_rule=spec.aggregation.describe(),
+    )
+
+
+def resolve_rubric(conn, ref: str):
+    """Resolve a rubric reference to a usable Rubric, preferring the database.
+
+    `ref` may be a rubrics.id (what observations store) or a built-in kind
+    string (what the upload form submits). Both are accepted because the two
+    conventions coexist in the codebase, and a resolver that handled only one
+    would silently fall back to the default rubric for the other — scoring an
+    observation against an instrument nobody chose.
+
+    An ingested rubric must be approved. A draft raises rather than scoring,
+    since the whole purpose of the draft state is that nobody has yet confirmed
+    the parse got the rating order right.
+    """
+    from .rubric import get_rubric
+
+    row = conn.execute(
+        "SELECT id, kind, spec_json, status, name FROM rubrics WHERE id = ?", (ref,)
+    ).fetchone()
+
+    if row is not None:
+        spec_json = row["spec_json"] if "spec_json" in row.keys() else None
+        if spec_json:
+            status = row["status"] if "status" in row.keys() else "approved"
+            if status != "approved":
+                raise ValueError(
+                    f"Rubric {row['name']!r} is a {status} and cannot be used for "
+                    f"scoring until it is approved."
+                )
+            return spec_to_rubric(RubricSpec.model_validate_json(spec_json), row["id"])
+        # A pre-ingestion row: the id is a DB uuid, the content is a built-in.
+        return get_rubric(row["kind"])
+
+    # Not a rubrics.id — treat it as a built-in kind.
+    return get_rubric(ref)
+
+
+def rubric_provenance(rubric) -> tuple:
+    """(rubric_id, content_hash, aggregation_rule) to record alongside a score."""
+    from .rubric import builtin_content_hash
+
+    return (
+        rubric.id,
+        rubric.content_hash or builtin_content_hash(rubric),
+        rubric.aggregation_rule or "builtin:preponderance-in-prompt",
     )

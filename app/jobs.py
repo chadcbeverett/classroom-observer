@@ -39,6 +39,7 @@ from pipeline.context import assemble_teacher_context, render_context_for_prompt
 from pipeline.db import connect as db_connect, record_bite_sized_action
 from pipeline.frames import sample_frames
 from pipeline.rubric import get_rubric
+from pipeline.rubric_spec import resolve_rubric, rubric_provenance
 from pipeline.score import score_observation
 from pipeline.transcribe import serialize, transcribe
 
@@ -389,7 +390,14 @@ def _run_job(
     work_dir = video_path.parent / f"_work_{observation_id}"
     work_dir.mkdir(exist_ok=True, parents=True)
     try:
-        rubric = get_rubric(rubric_id)
+        # Resolve against the database first: an approved district rubric wins
+        # over the built-in of the same name, and a draft refuses outright
+        # rather than scoring against a parse nobody has confirmed.
+        _rconn = db_connect(db_path)
+        try:
+            rubric = resolve_rubric(_rconn, rubric_id)
+        finally:
+            _rconn.close()
 
         # Probe
         _set_status(db_path, observation_id, "transcribing")
@@ -611,8 +619,9 @@ def _persist_report(
                    (id, observation_id, version_number, authored_by,
                     opening_paragraph, overall_summary,
                     domain_assessments, coaching_recommendations,
-                    rendered_markdown, published_at, created_at)
-               VALUES (?, ?, ?, 'ai', ?, ?, ?, ?, ?, ?, ?)""",
+                    rendered_markdown, published_at, created_at,
+                    scored_rubric_id, scored_rubric_hash, aggregation_rule)
+               VALUES (?, ?, ?, 'ai', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 str(uuid.uuid4()),
                 observation_id,
@@ -624,6 +633,11 @@ def _persist_report(
                 None,
                 _now,
                 _now,
+                # Which instrument produced this score, and under which rule.
+                # Recorded at write time because a district may edit its rubric
+                # afterwards, and a rating whose basis cannot be named is a
+                # rating that cannot be defended.
+                *rubric_provenance(rubric),
             ),
         )
 

@@ -817,8 +817,9 @@ def import_scores_json(
                (id, observation_id, version_number, authored_by,
                 opening_paragraph, overall_summary,
                 domain_assessments, coaching_recommendations,
-                rendered_markdown, published_at, created_at)
-           VALUES (?, ?, ?, 'ai', ?, ?, ?, ?, ?, ?, ?)""",
+                rendered_markdown, published_at, created_at,
+                scored_rubric_id, scored_rubric_hash, aggregation_rule)
+           VALUES (?, ?, ?, 'ai', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             _new_id(),
             observation_id,
@@ -830,6 +831,12 @@ def import_scores_json(
             rendered_md,
             ts,
             ts,
+            # Imported baselines were scored elsewhere, so the instrument is
+            # named but the rule that produced the ratings is not knowable.
+            # Say that rather than implying a rule we did not apply.
+            rubric_id,
+            None,
+            "imported:rule-unknown",
         ),
     )
 

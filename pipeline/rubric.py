@@ -62,6 +62,10 @@ class Rubric:
     # Set for ingested rubrics, which have no source PDF to attach. The
     # scorer sends this text in place of the document block.
     rubric_text: Optional[str] = None
+    # Provenance, recorded on every score made against this rubric so a
+    # rating stays defensible after the instrument behind it changes.
+    content_hash: Optional[str] = None
+    aggregation_rule: Optional[str] = None
 
     def score_for(self, rating: str) -> int:
         """1-indexed numeric score for a rating. Raises if not a valid rating."""
@@ -162,6 +166,27 @@ TNTP_CORE_4PT_2014 = Rubric(
 RUBRICS: Dict[str, Rubric] = {
     TNTP_CORE_4PT_2014.id: TNTP_CORE_4PT_2014,
 }
+
+
+def builtin_content_hash(rubric: Rubric) -> str:
+    """Content hash for a built-in rubric.
+
+    Ingested rubrics hash their RubricSpec. Built-ins have no spec, so hash the
+    scoring-relevant fields directly — otherwise a score made against a built-in
+    would carry no provenance at all, and the two kinds could not be compared.
+    """
+    import hashlib as _hashlib
+    import json as _json
+
+    payload = {
+        "id": rubric.id,
+        "domains": list(rubric.domains),
+        "rating_levels": list(rubric.rating_levels),
+        "essential_questions": dict(sorted(rubric.essential_questions.items())),
+        "scoring_notes": rubric.scoring_notes,
+    }
+    blob = _json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    return _hashlib.sha256(blob).hexdigest()
 
 
 def get_rubric(rubric_id: str) -> Rubric:
