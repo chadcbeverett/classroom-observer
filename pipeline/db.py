@@ -110,6 +110,27 @@ def _apply_additive_migrations(conn: sqlite3.Connection) -> None:
         # of the arc. Rendered co-equal with the rubric-delta KPI on cycle close.
         # Distinct from `notes` (kick-off) and `closing_notes` (short close tags).
         ("coaching_cycles", "growth_story", "TEXT"),
+        # rubrics: rubric-agnostic ingestion. `spec_json` holds a parsed
+        # RubricSpec (pipeline/rubric_spec.py); `content_hash` identifies the
+        # scoring-relevant content so a score can name the exact instrument that
+        # produced it, and so re-uploading an unchanged rubric is recognised
+        # rather than duplicated. `status` gates use: a parsed rubric is a draft
+        # until a human approves it, because a plausible-looking mis-parse that
+        # silently reversed the rating order would invert every score made
+        # against it.
+        ("rubrics", "spec_json", "TEXT"),
+        ("rubrics", "content_hash", "TEXT"),
+        ("rubrics", "status", "TEXT NOT NULL DEFAULT 'approved'"),
+        ("rubrics", "approved_at", "TEXT"),
+        ("rubrics", "approved_by_user_id", "TEXT"),
+        ("rubrics", "source_ref", "TEXT"),
+        ("rubrics", "ingest_warnings", "TEXT"),
+        # report_versions: which rubric and which aggregation rule produced this
+        # score. Without it a historical score cannot be reproduced or defended
+        # once the district edits its rubric.
+        ("report_versions", "scored_rubric_id", "TEXT"),
+        ("report_versions", "scored_rubric_hash", "TEXT"),
+        ("report_versions", "aggregation_rule", "TEXT"),
     ]:
         cols = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
         if column not in cols:
@@ -2840,3 +2861,84 @@ def list_practice_log_for_teacher(
         d["cycle_title"] = notes.splitlines()[0] if notes else None
         out.append(d)
     return out
+
+
+# ---------------------------------------------------------------------------
+# Rubric-agnostic ingestion: storage, approval, lookup
+# ---------------------------------------------------------------------------
+
+def save_rubric_draft(
+    conn: sqlite3.Connection,
+    *,
+    org_id: str,
+    spec,
+    source_ref: Optional[str] = None,
+    warnings: Optional[List[str]] = None,
+) -> str:
+    """Store a parsed RubricSpec as a draft awaiting approval.
+
+    Returns the rubrics.id. A draft is never usable for scoring — approval is a
+    separate, deliberate act, because the failure mode that matters (a mis-parse
+    that reverses the rating order) produces a rubric that looks entirely normal.
+
+    Re-ingesting a rubric whose content hash already exists in this org returns
+    the existing row instead of creating a duplicate, so an admin who uploads
+    the same file twice does not end up choosing between identical entries.
+    """
+    import json as _json
+    import uuid as _uuid
+
+    content_hash = spec.content_hash()
+    existing = conn.execute(
+        "SELECT id FROM rubrics WHERE org_id = ? AND content_hash = ? AND archived_at IS NULL",
+        (org_id, content_hash),
+    ).fetchone()
+    if existing:
+        return existing["id"]
+
+    rubric_id = str(_uuid.uuid4())
+    conn.execute(
+        """INSERT INTO rubrics
+             (id, org_id, kind, name, version, pdf_ref, config_json,
+              spec_json, content_hash, status, source_ref, ingest_warnings, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,'draft',?,?,?)""",
+        (
+            rubric_id, org_id, "ingested", spec.name, spec.version, None,
+            "{}",  # legacy column; the spec is the source of truth now
+            spec.model_dump_json(), content_hash, source_ref,
+            _json.dumps(warnings or []), _now_iso(),
+        ),
+    )
+    conn.commit()
+    return rubric_id
+
+
+def approve_rubric(conn: sqlite3.Connection, rubric_id: str, *, user_id: str) -> None:
+    """Mark a draft rubric usable for scoring. Idempotent."""
+    conn.execute(
+        """UPDATE rubrics SET status = 'approved', approved_at = ?, approved_by_user_id = ?
+           WHERE id = ? AND status <> 'approved'""",
+        (_now_iso(), user_id, rubric_id),
+    )
+    conn.commit()
+
+
+def list_org_rubrics(conn: sqlite3.Connection, org_id: str) -> List[dict]:
+    """Every rubric available to an org: its own, plus any built-in."""
+    rows = conn.execute(
+        """SELECT * FROM rubrics
+           WHERE (org_id = ? OR org_id IS NULL) AND archived_at IS NULL
+           ORDER BY (org_id IS NULL), created_at DESC""",
+        (org_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def load_rubric_spec(conn: sqlite3.Connection, rubric_id: str):
+    """Return the stored RubricSpec, or None when the row predates ingestion."""
+    from .rubric_spec import RubricSpec
+
+    row = conn.execute("SELECT spec_json FROM rubrics WHERE id = ?", (rubric_id,)).fetchone()
+    if not row or not row["spec_json"]:
+        return None
+    return RubricSpec.model_validate_json(row["spec_json"])
