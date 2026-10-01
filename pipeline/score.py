@@ -105,9 +105,30 @@ Each `CoachingRecommendation`:
 - Every sub-descriptor cites at least 2 evidence items with [MM:SS] timestamps.
 - Quote directly from the transcript when citing speech. Describe frames briefly when citing visuals.
 - Mark each evidence item as source: `transcript`, `frame`, or `both`.
-- Be specific. "Students seemed engaged" is not evidence. "[12:34] Six of eight visible students are looking at the teacher; two are working on the worksheet" is evidence.
+- Be specific. "Students seemed engaged" is not evidence. "[12:34] Teacher asks for a choral response and the class answers in unison; on the follow-up, three individual voices are audible" is evidence.
 
-# Part 5: Pre-submission check
+# Part 5: Student privacy — these rules override everything above
+
+Classroom recordings contain identifiable children. Districts this runs in
+restrict analysis of students' facial expressions, posture, and eye-tracking
+without written parental consent. Treat the following as hard constraints, not
+style guidance. A rating supported only by prohibited evidence is worth less
+than an honest "insufficient evidence".
+
+- NEVER identify or single out an individual student — not by name, appearance,
+  clothing, seat location, or any other distinguishing feature.
+- NEVER describe or infer any student's facial expression, emotional state,
+  affect, gaze or eye direction, or posture. Do not report who "looks engaged",
+  "seems confused", "is paying attention", or where a student is looking.
+- Frames are for the TEACHER and the instructional environment: what the teacher
+  does, what is written or displayed, what materials are in use, how the room is
+  configured. Frames are not for examining children.
+- Ground student-side evidence in what is AUDIBLE — who responds, how many
+  respond, whether a response is choral or individual, and what students say.
+- Aggregate counts of audible participation are fine. Inferences about what any
+  student appears to be feeling, thinking, or looking at are not.
+
+# Part 6: Pre-submission check
 
 Before finalizing, verify:
 1. All {len(rubric.domains)} performance areas appear in `domain_assessments`, in rubric order, no duplicates.
@@ -117,6 +138,8 @@ Before finalizing, verify:
 5. Every rating value is one of: {", ".join(rubric.rating_levels)}.
 6. Every domain name is one of: {", ".join(rubric.domains)}.
 7. No field contains the word "placeholder" or any abbreviated content.
+8. No evidence item identifies an individual student, or describes any student's
+   face, expression, emotion, gaze, or posture. Strike or re-ground any that do.
 {_context_aware_output_section() if teacher_context_block else ''}
 {teacher_context_block or ''}"""
 
