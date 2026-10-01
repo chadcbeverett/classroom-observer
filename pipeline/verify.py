@@ -123,8 +123,15 @@ def coverage(fragment: str, haystack: str) -> float:
         return 1.0
     if not h:
         return 0.0
-    match = SequenceMatcher(None, f, h, autojunk=False).find_longest_match(0, len(f), 0, len(h))
-    return match.size / len(f)
+    # Sum the matching blocks rather than taking only the longest. A faithful
+    # quote spanning several transcript segments joins them slightly
+    # differently — "No." then "No, who was..." against the model's "No. Who
+    # was..." — and longest-block alone scored that at 53% and called a verbatim
+    # quote a fabrication. Blocks under 4 characters are ignored so coincidental
+    # matches on short common words cannot accumulate into a false pass.
+    matcher = SequenceMatcher(None, f, h, autojunk=False)
+    matched = sum(b.size for b in matcher.get_matching_blocks() if b.size >= 4)
+    return min(1.0, matched / len(f))
 
 
 def _fmt_ts(seconds: float) -> str:
