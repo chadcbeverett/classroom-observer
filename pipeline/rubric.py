@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Optional
 
 
 @dataclass(frozen=True)
@@ -47,7 +47,7 @@ class Rubric:
     """
     id: str
     name: str
-    pdf_path: Path
+    pdf_path: Optional[Path]
     domains: List[str]
     rating_levels: List[str]
     essential_questions: Dict[str, str]
@@ -59,6 +59,9 @@ class Rubric:
     # Optional per-domain sub-descriptor hints for the prompt; leave empty to
     # let the model discover them from the PDF.
     sub_descriptor_hints: Dict[str, List[str]] = field(default_factory=dict)
+    # Set for ingested rubrics, which have no source PDF to attach. The
+    # scorer sends this text in place of the document block.
+    rubric_text: Optional[str] = None
 
     def score_for(self, rating: str) -> int:
         """1-indexed numeric score for a rating. Raises if not a valid rating."""

@@ -301,3 +301,79 @@ def aggregate_domain(
         f"{rule.tie_break}, giving {winner}."
     )
     return base
+
+
+# ---------------------------------------------------------------------------
+# Bridge to the legacy Rubric object the prompt builder consumes
+# ---------------------------------------------------------------------------
+
+def _render_rubric_text(spec: "RubricSpec") -> str:
+    """Render a spec as the text the scorer reads in place of a PDF.
+
+    A built-in rubric is attached to the scoring call as its source PDF. An
+    ingested one has no PDF to attach — and attaching one would reintroduce the
+    licensing problem this whole path exists to remove — so the district's own
+    wording is rendered from the spec instead.
+    """
+    lines = [f"# {spec.name}", ""]
+    if spec.version:
+        lines.append(f"Version: {spec.version}")
+    lines.append(f"Rating levels, weakest to strongest: {', '.join(spec.rating_levels)}")
+    lines.append("")
+    for d in spec.domains:
+        lines.append(f"## {d.name}")
+        if d.essential_question:
+            lines.append(f"Essential question: {d.essential_question}")
+        lines.append("")
+        for s in d.sub_descriptors:
+            lines.append(f"### {s.name}")
+            by_level = s.text_by_level()
+            for lvl in spec.rating_levels:
+                if lvl in by_level:
+                    lines.append(f"- **{lvl}:** {by_level[lvl]}")
+            lines.append("")
+    return "\n".join(lines).strip()
+
+
+def _render_scoring_notes(spec: "RubricSpec") -> str:
+    """State the aggregation rule to the model as context.
+
+    The model does not apply this — aggregate_domain does — but it explains why
+    a sub-descriptor judgment matters and discourages the model from reaching
+    for a domain-level verdict of its own.
+    """
+    rule = spec.aggregation
+    tie = "the LOWER" if rule.tie_break == "lower" else "the HIGHER"
+    return (
+        f"Rate each sub-descriptor independently and support each with evidence. "
+        f"Do NOT decide the overall rating for a performance area — that is "
+        f"computed from your sub-descriptor ratings by a fixed rule: the level "
+        f"held by the most sub-descriptors wins, and a tie takes {tie} level. "
+        f"A sub-descriptor with fewer than {rule.min_evidence_per_descriptor} "
+        f"pieces of verifiable evidence should be left unrated rather than "
+        f"guessed; an honest gap is more useful than a fabricated score."
+    )
+
+
+def spec_to_rubric(spec: "RubricSpec", rubric_id: str):
+    """Build the legacy Rubric the prompt builder expects from a RubricSpec."""
+    from .rubric import Rubric
+
+    return Rubric(
+        id=rubric_id,
+        name=spec.name,
+        pdf_path=None,
+        domains=spec.domain_names,
+        rating_levels=list(spec.rating_levels),
+        essential_questions={
+            d.name: (d.essential_question or "") for d in spec.domains
+        },
+        core_teacher_skill_note=spec.core_teacher_skill_note or "",
+        vocabulary_examples=list(spec.vocabulary_examples),
+        coaching_philosophy=spec.coaching_philosophy or "",
+        scoring_notes=_render_scoring_notes(spec),
+        sub_descriptor_hints={
+            d.name: [s.name for s in d.sub_descriptors] for d in spec.domains
+        },
+        rubric_text=_render_rubric_text(spec),
+    )

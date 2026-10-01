@@ -280,7 +280,17 @@ def _build_user_content(
     """User message: rubric PDF (cached), then transcript, then frames."""
     content: List[dict] = []
 
-    rubric_block = _encode_pdf(rubric.pdf_path, title=rubric.name)
+    # A built-in rubric ships with its source PDF and is attached as a document.
+    # An ingested rubric has none — attaching one would put the publisher's
+    # instrument back in the payload, which is what ingestion exists to avoid —
+    # so its own text is sent instead.
+    if rubric.pdf_path:
+        rubric_block = _encode_pdf(rubric.pdf_path, title=rubric.name)
+    else:
+        rubric_block = {
+            "type": "text",
+            "text": f"<rubric name=\"{rubric.name}\">\n{rubric.rubric_text or ''}\n</rubric>",
+        }
     rubric_block["cache_control"] = {"type": "ephemeral"}
     content.append(rubric_block)
 
