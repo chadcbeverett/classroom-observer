@@ -73,13 +73,30 @@ class AggregationRule(BaseModel):
         )
 
 
+class LevelText(BaseModel):
+    """Verbatim rubric wording for one sub-descriptor at one rating level.
+
+    A list of these rather than a {level: text} map. An open-ended map is the
+    natural shape, but structured-output schemas close objects to a fixed set of
+    properties, which leaves a map unable to carry any keys at all — the first
+    run against a real rubric came back with every entry empty and no error.
+    """
+
+    level: str = Field(description="Rating label this text belongs to.")
+    text: str = Field(description="The rubric's own wording, verbatim.")
+
+
 class SubDescriptor(BaseModel):
     name: str = Field(description="Sub-descriptor name as it appears in the rubric.")
-    level_text: Dict[str, str] = Field(
-        default_factory=dict,
-        description="Rating label -> verbatim descriptor text at that level. "
-                    "May be partial; rubrics vary in how fully they enumerate.",
+    level_text: List[LevelText] = Field(
+        default_factory=list,
+        description="Verbatim descriptor text per rating level. May cover only "
+                    "some levels; rubrics vary in how fully they enumerate.",
     )
+
+    def text_by_level(self) -> Dict[str, str]:
+        """Convenience accessor for callers that want the map shape."""
+        return {lt.level: lt.text for lt in self.level_text}
 
 
 class RubricDomain(BaseModel):
@@ -134,7 +151,8 @@ class RubricSpec(BaseModel):
         known = {lvl.lower() for lvl in self.rating_levels}
         for d in self.domains:
             for sd in d.sub_descriptors:
-                for lvl in sd.level_text:
+                for lt in sd.level_text:
+                    lvl = lt.level
                     if lvl.strip().lower() not in known:
                         raise ValueError(
                             f"{d.name} / {sd.name}: descriptor text is keyed to "
@@ -182,7 +200,10 @@ class RubricSpec(BaseModel):
                     "sub_descriptors": [
                         {
                             "name": s.name.strip(),
-                            "level_text": {k.strip(): v.strip() for k, v in sorted(s.level_text.items())},
+                            "level_text": {
+                                lt.level.strip(): lt.text.strip()
+                                for lt in sorted(s.level_text, key=lambda x: x.level)
+                            },
                         }
                         for s in d.sub_descriptors
                     ],
