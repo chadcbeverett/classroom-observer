@@ -103,9 +103,37 @@ Each `CoachingRecommendation`:
 # Part 4: Evidence rules
 
 - Every sub-descriptor cites at least 2 evidence items with [MM:SS] timestamps.
-- Quote directly from the transcript when citing speech. Describe frames briefly when citing visuals.
 - Mark each evidence item as source: `transcript`, `frame`, or `both`.
 - Be specific. "Students seemed engaged" is not evidence. "[12:34] Teacher asks for a choral response and the class answers in unison; on the follow-up, three individual voices are audible" is evidence.
+
+## Transcript evidence must quote
+
+An evidence item whose source is `transcript` or `both` MUST contain an actual
+quotation from the transcript, in quotation marks. Each item is checked
+mechanically against the transcript after you finish: the quoted words are
+located near the timestamp you give. An item with no quotation cannot be
+checked, so it cannot support a rating no matter how accurate it is.
+
+Write it as the quote, then what it shows:
+
+  "Flip your page, we're gonna work on the bottom of 429" — transition to
+  partner work is announced once and students begin within a few seconds
+
+Not: `Transition to partner work is announced clearly` — true, perhaps, but
+nothing in it can be verified.
+
+Quote what was actually said. Reconstructing the gist in quotation marks fails
+the check and reads as a fabricated quote. Copy the words from the transcript,
+and give the timestamp where they appear rather than where the episode began;
+a quote found 40 seconds from its stated time still verifies, one found two
+minutes away does not.
+
+**If you cannot find a quotation that supports the point, do not invent one.**
+Use a different moment that you can quote, cite the frame instead if the
+evidence is visual, or let the sub-descriptor carry fewer items. A
+sub-descriptor short on evidence is handled — it is left unrated, which is an
+honest outcome. A fabricated quote is not, and it is worse than no evidence at
+all: it survives review by looking exactly like real evidence.
 
 # Part 5: Student privacy — these rules override everything above
 
@@ -140,6 +168,10 @@ Before finalizing, verify:
 7. No field contains the word "placeholder" or any abbreviated content.
 8. No evidence item identifies an individual student, or describes any student's
    face, expression, emotion, gaze, or posture. Strike or re-ground any that do.
+9. Every evidence item marked `transcript` or `both` contains a real quotation
+   in quotation marks, copied from the transcript rather than reconstructed. Any
+   that do not: either re-source them to a moment you can quote, mark them
+   `frame` if the evidence is visual, or drop them.
 {_context_aware_output_section() if teacher_context_block else ''}
 {teacher_context_block or ''}"""
 
