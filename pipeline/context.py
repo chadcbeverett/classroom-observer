@@ -58,8 +58,15 @@ class TeacherContext:
     # District arc + this year's priorities (may be None if no district context configured)
     district_context: Optional[dict] = None
 
-    # Current academic-year phase (computed from date + district year_arc, or generic default)
+    # Current academic-year phase (computed from date + district year_arc, or generic default).
+    # This is a SEASON — where the school year is — not where the teacher is
+    # developmentally. It shapes tone, not which skill comes next.
     current_phase: Optional[dict] = None
+
+    # Where the teacher stands in the Get Better Faster sequence, derived from
+    # which steps have been worked and whether the transfer check found them
+    # holding. Distinct from current_phase above: this one advances on mastery.
+    gbf_mastery: Optional[object] = None
 
     # Currently-active coaching cycle (at most one visible here; if multiple, most recent)
     active_cycle: Optional[dict] = None
@@ -181,6 +188,14 @@ def assemble_teacher_context(
         arc = _GENERIC_YEAR_ARC
     current_phase = _current_phase(arc, as_of)
 
+    from .mastery import teacher_mastery
+    try:
+        gbf_mastery = teacher_mastery(conn, teacher_id)
+    except sqlite3.OperationalError:
+        # Databases predating the transfer-check table still score; they simply
+        # have no mastery history to show.
+        gbf_mastery = None
+
     return TeacherContext(
         teacher_id=teacher_id,
         teacher_name=row["name"],
@@ -190,6 +205,7 @@ def assemble_teacher_context(
         open_actions=open_actions,
         district_context=district,
         current_phase=current_phase,
+        gbf_mastery=gbf_mastery,
         active_cycle=active_cycle,
         district_documents=district_docs,
         recent_practice_log=practice_log,
@@ -501,6 +517,16 @@ def render_context_for_prompt(ctx: TeacherContext) -> str:
     # --- Get Better Faster scope-and-sequence ---
     out.append(render_gbf_for_prompt(max_bullets_per_step=2))
     out.append("")
+
+    # --- Where this teacher actually is in that sequence ---
+    # Without this the model re-derives the teacher's stage from one lesson
+    # every time, which is how a teacher gets handed the same step three cycles
+    # running, or jumped to a late-phase technique because one lesson looked
+    # advanced.
+    if ctx.gbf_mastery is not None:
+        from .mastery import render_for_prompt as _render_mastery
+        out.append(_render_mastery(ctx.gbf_mastery))
+        out.append("")
 
     # --- Final instruction for the highest_leverage_move field ---
     out.append("## About the `highest_leverage_move` output field")
