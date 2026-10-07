@@ -204,6 +204,41 @@ def _apply_additive_migrations(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_practice_sessions_plan ON practice_sessions(practice_plan_id, held_at DESC)"
     )
 
+    # Did the practised move show up in the next lesson? The AI counts and
+    # proposes; the coach confirms. Both statuses are stored because they
+    # disagree sometimes, and the disagreement is the interesting signal — a
+    # coach overriding the count often means the move was not detectable from
+    # audio, which is worth knowing before trusting the next count.
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS move_transfer_checks (
+            id                      TEXT PRIMARY KEY,
+            observation_id          TEXT NOT NULL REFERENCES observations(id),
+            coaching_move_id        TEXT NOT NULL REFERENCES published_coach_moves(id),
+            teacher_id              TEXT NOT NULL REFERENCES teachers(id),
+            org_id                  TEXT NOT NULL REFERENCES organizations(id),
+            move_as_understood      TEXT,
+            detectable              INTEGER NOT NULL DEFAULT 1,
+            not_detectable_reason   TEXT,
+            opportunities_count     INTEGER NOT NULL DEFAULT 0,
+            uses_claimed            INTEGER NOT NULL DEFAULT 0,
+            uses_verified           INTEGER NOT NULL DEFAULT 0,
+            median_latency_sec      REAL,
+            evidence_json           TEXT NOT NULL DEFAULT '{}',
+            ai_status               TEXT NOT NULL,
+            ai_rationale            TEXT,
+            coach_confirmed_status  TEXT,
+            confirmed_by_user_id    TEXT REFERENCES users(id),
+            confirmed_at            TEXT,
+            created_at              TEXT NOT NULL
+        )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_transfer_obs ON move_transfer_checks(observation_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_transfer_teacher ON move_transfer_checks(teacher_id, created_at DESC)"
+    )
+
     # New table: the coach's *published* move for the teacher.
     # Distinct from the AI's raw suggestion — coach reviews AI, edits, and
     # publishes. Teacher never sees raw AI output; only the coach's version.
@@ -3169,3 +3204,104 @@ def practice_state_for_teacher(conn: sqlite3.Connection, teacher_id: str) -> dic
         "published": row["published"] or 0,
         "sessions_held": held["c"] or 0,
     }
+
+
+# ---------------------------------------------------------------------------
+# Move transfer checks
+# ---------------------------------------------------------------------------
+
+def save_transfer_check(
+    conn: sqlite3.Connection,
+    *,
+    observation_id: str,
+    coaching_move_id: str,
+    teacher_id: str,
+    org_id: str,
+    result,
+) -> str:
+    """Record one transfer check. Replaces any earlier check for the same pair."""
+    import json as _json
+
+    conn.execute(
+        "DELETE FROM move_transfer_checks WHERE observation_id = ? AND coaching_move_id = ?",
+        (observation_id, coaching_move_id),
+    )
+    check_id = _new_id()
+    conn.execute(
+        """INSERT INTO move_transfer_checks
+             (id, observation_id, coaching_move_id, teacher_id, org_id,
+              move_as_understood, detectable, not_detectable_reason,
+              opportunities_count, uses_claimed, uses_verified, median_latency_sec,
+              evidence_json, ai_status, ai_rationale, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (
+            check_id, observation_id, coaching_move_id, teacher_id, org_id,
+            result.move_as_understood, 1 if result.detectable else 0,
+            result.not_detectable_reason, result.opportunities, result.uses_claimed,
+            result.uses_verified, result.median_latency_seconds,
+            _json.dumps({"uses": result.uses, "missed": result.missed}),
+            result.status, result.rationale, _now_iso(),
+        ),
+    )
+    conn.commit()
+    return check_id
+
+
+def confirm_transfer_check(
+    conn: sqlite3.Connection, check_id: str, *, status: str, user_id: str
+) -> None:
+    """Coach confirms or overrides the proposed status."""
+    from .transfer import STATUSES
+
+    if status not in STATUSES and status != "not_checkable":
+        raise ValueError(f"Unknown transfer status {status!r}")
+    conn.execute(
+        """UPDATE move_transfer_checks
+              SET coach_confirmed_status = ?, confirmed_by_user_id = ?, confirmed_at = ?
+            WHERE id = ?""",
+        (status, user_id, _now_iso(), check_id),
+    )
+    conn.commit()
+
+
+def get_transfer_check(conn: sqlite3.Connection, observation_id: str, coaching_move_id: str):
+    import json as _json
+
+    row = conn.execute(
+        """SELECT * FROM move_transfer_checks
+           WHERE observation_id = ? AND coaching_move_id = ?""",
+        (observation_id, coaching_move_id),
+    ).fetchone()
+    if not row:
+        return None
+    out = dict(row)
+    try:
+        ev = _json.loads(out.get("evidence_json") or "{}")
+    except ValueError:
+        ev = {}
+    out["uses"] = ev.get("uses", [])
+    out["missed"] = ev.get("missed", [])
+    out["effective_status"] = out.get("coach_confirmed_status") or out.get("ai_status")
+    return out
+
+
+def prior_transfer_status(
+    conn: sqlite3.Connection, teacher_id: str, *, before_observation_id: str
+) -> Optional[str]:
+    """The teacher's most recent confirmed status before this observation.
+
+    Feeds the consistent-then-automatic rule. Prefers the coach's confirmation
+    over the AI's proposal, because promoting a move to automatic on the
+    strength of two unreviewed machine counts is exactly the kind of claim this
+    feature exists to avoid.
+    """
+    row = conn.execute(
+        """SELECT COALESCE(c.coach_confirmed_status, c.ai_status) AS st
+           FROM move_transfer_checks c
+           JOIN observations o ON o.id = c.observation_id
+           WHERE c.teacher_id = ? AND c.observation_id <> ?
+             AND o.deleted_at IS NULL
+           ORDER BY o.uploaded_at DESC LIMIT 1""",
+        (teacher_id, before_observation_id),
+    ).fetchone()
+    return row["st"] if row else None

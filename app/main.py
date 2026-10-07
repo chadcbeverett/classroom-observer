@@ -104,6 +104,8 @@ from pipeline.db import (
     publish_coach_move, edit_coach_move, get_current_coach_move,
     create_practice_plan, publish_practice_plan, get_practice_plan_for_move,
     log_practice_session, list_practice_sessions,
+    save_transfer_check, confirm_transfer_check, get_transfer_check,
+    prior_transfer_status,
     list_coach_move_history, most_recent_published_move_for_teacher,
     carry_forward_goal, set_action_goal, list_actions_for_goal,
     add_practice_log_entry, list_practice_log_for_teacher,
@@ -1669,6 +1671,19 @@ def observation_detail(request: Request, observation_id: str) -> HTMLResponse:
         _coach_move = get_current_coach_move(conn2, observation_id)
         # Rehearsal attached to the current move, plus any sessions already run.
         _practice_plan = get_practice_plan_for_move(conn2, _coach_move["id"]) if _coach_move else None
+        # Transfer check looks backwards: did the move from the PREVIOUS lesson
+        # show up in this one. So it keys on the prior move, not _coach_move.
+        _prior_move = conn2.execute(
+            """SELECT m.id, m.move_text FROM published_coach_moves m
+               JOIN observations o2 ON o2.id = m.observation_id
+               WHERE o2.teacher_id = ? AND o2.id <> ? AND m.superseded_at IS NULL
+                 AND o2.uploaded_at < (SELECT uploaded_at FROM observations WHERE id = ?)
+                 AND o2.deleted_at IS NULL
+               ORDER BY m.published_at DESC LIMIT 1""",
+            (obs["teacher_id"], observation_id, observation_id),
+        ).fetchone()
+        _transfer = (get_transfer_check(conn2, observation_id, _prior_move["id"])
+                     if _prior_move else None)
         _practice_sessions = (list_practice_sessions(conn2, _practice_plan["id"])
                               if _practice_plan else [])
         _coach_move_history = list_coach_move_history(conn2, observation_id)
@@ -1746,6 +1761,8 @@ def observation_detail(request: Request, observation_id: str) -> HTMLResponse:
             "deleted_at": _fmt_ts(obs["deleted_at"]) if obs["deleted_at"] else None,
         },
         "practice_plan": _practice_plan,
+        "prior_move": (dict(_prior_move) if _prior_move else None),
+        "transfer_check": _transfer,
         "practice_sessions": _practice_sessions,
         "ratings": ratings,
         "rubric": rubric,
@@ -4856,6 +4873,143 @@ def obs_publish_coach_move(
     finally:
         conn.close()
     return RedirectResponse(url=f"/observations/{observation_id}", status_code=303)
+
+
+def _load_transcript_segments(obs) -> list:
+    """Find and load the stored transcript for an observation.
+
+    The scoring job writes transcript.json beside the upload and never records
+    where, so `observations.transcript_ref` is NULL on every existing row and
+    the location has to be rebuilt by convention. New runs record the path (see
+    app/jobs.py), so this falls back in order: the recorded pointer, the
+    conventional work directory, then the import folder for baselines.
+    Returns [] when nothing is found — the caller decides what that means.
+    """
+    from types import SimpleNamespace
+
+    candidates = []
+    ref = obs["transcript_ref"] if "transcript_ref" in obs.keys() else None
+    if ref:
+        candidates.append(Path(ref))
+    oid = obs["id"]
+    candidates.append(UPLOADS_DIR / oid / f"_work_{oid}" / "transcript.json")
+    vref = obs["video_ref"] if "video_ref" in obs.keys() else None
+    if vref:
+        candidates.append(PROJECT_ROOT / vref / "transcript.json")
+        candidates.append(Path(vref) / "transcript.json")
+
+    for path in candidates:
+        try:
+            if not path.is_file():
+                continue
+            raw = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        out = []
+        for seg in raw if isinstance(raw, list) else []:
+            if not isinstance(seg, dict):
+                continue
+            out.append(SimpleNamespace(
+                start=seg.get("start") or 0.0,
+                end=seg.get("end") or 0.0,
+                text=seg.get("text") or "",
+            ))
+        if out:
+            return out
+    return []
+
+
+@app.post("/observations/{observation_id}/transfer-check")
+def obs_run_transfer_check(request: Request, observation_id: str) -> RedirectResponse:
+    """Count whether the previously practised move showed up in this lesson.
+
+    Checks the move from the teacher's *previous* observation, not this one:
+    the question is whether what they rehearsed came back, and the move named
+    on this lesson has not been practised yet.
+    """
+    if request.state.viewer["role"] != "coach":
+        raise HTTPException(403, "Only the coach runs transfer checks")
+    viewer = _guard_obs_write(request, observation_id, "Transfer check")
+    conn = db_connect(DB_PATH)
+    try:
+        obs = conn.execute(
+            """SELECT o.*, t.name AS teacher_name FROM observations o
+               JOIN teachers t ON t.id = o.teacher_id WHERE o.id = ?""",
+            (observation_id,),
+        ).fetchone()
+        if not obs:
+            raise HTTPException(404, "Observation not found")
+
+        prior = conn.execute(
+            """SELECT m.id, m.move_text FROM published_coach_moves m
+               JOIN observations o2 ON o2.id = m.observation_id
+               WHERE o2.teacher_id = ? AND o2.id <> ? AND m.superseded_at IS NULL
+                 AND o2.uploaded_at < ? AND o2.deleted_at IS NULL
+               ORDER BY m.published_at DESC LIMIT 1""",
+            (obs["teacher_id"], observation_id, obs["uploaded_at"]),
+        ).fetchone()
+        if not prior:
+            raise HTTPException(
+                400,
+                "There is no earlier move to check. A transfer check looks for a "
+                "move named after a previous lesson.",
+            )
+
+        segments = _load_transcript_segments(obs)
+        if not segments:
+            raise HTTPException(
+                400,
+                "No transcript is stored for this lesson, so the move cannot be counted.",
+            )
+
+        from pipeline.transfer import check_move_transfer
+        try:
+            result = check_move_transfer(
+                move_text=prior["move_text"],
+                transcript=segments,
+                duration_seconds=obs["video_duration_s"],
+                prior_status=prior_transfer_status(
+                    conn, obs["teacher_id"], before_observation_id=observation_id),
+            )
+        except Exception as e:
+            raise HTTPException(502, f"Could not run the transfer check: {e}")
+
+        save_transfer_check(
+            conn,
+            observation_id=observation_id,
+            coaching_move_id=prior["id"],
+            teacher_id=obs["teacher_id"],
+            org_id=obs["org_id"],
+            result=result,
+        )
+    finally:
+        conn.close()
+    return RedirectResponse(url=f"/observations/{observation_id}#transfer", status_code=303)
+
+
+@app.post("/transfer-checks/{check_id}/confirm")
+def transfer_check_confirm(
+    request: Request, check_id: str, status: str = Form(...)
+) -> RedirectResponse:
+    """Coach confirms the proposed status, or overrides it."""
+    if request.state.viewer["role"] != "coach":
+        raise HTTPException(403, "Only the coach confirms transfer status")
+    conn = db_connect(DB_PATH)
+    try:
+        row = conn.execute(
+            "SELECT observation_id FROM move_transfer_checks WHERE id = ?", (check_id,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "Transfer check not found")
+        viewer = _guard_obs_write(request, row["observation_id"], "Transfer confirm")
+        try:
+            confirm_transfer_check(conn, check_id, status=status, user_id=_viewer_uid(viewer))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        obs_id = row["observation_id"]
+    finally:
+        conn.close()
+    return RedirectResponse(url=f"/observations/{obs_id}#transfer", status_code=303)
 
 
 @app.post("/coach-moves/{move_id}/practice-plan/draft")

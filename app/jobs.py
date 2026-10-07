@@ -408,6 +408,16 @@ def _run_job(
         segments = transcribe(audio_path, model_size=whisper_model)
         transcript_path = work_dir / "transcript.json"
         transcript_path.write_text(json.dumps(serialize(segments), indent=2))
+        # Record where it landed. The path was previously only reconstructable
+        # by convention, which left transcript_ref NULL on every row and made
+        # anything wanting the transcript later guess at the layout.
+        _tc = db_connect(db_path)
+        try:
+            _tc.execute("UPDATE observations SET transcript_ref = ? WHERE id = ?",
+                        (str(transcript_path), observation_id))
+            _tc.commit()
+        finally:
+            _tc.close()
 
         # Frames
         frames_dir = work_dir / "frames"

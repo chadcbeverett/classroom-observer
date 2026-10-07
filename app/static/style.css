@@ -3651,3 +3651,87 @@ nav a { padding-left: 8px; padding-right: 8px; }
 }
 
 .tv-practice__objective { margin: 0 0 6px; font-size: 14px; line-height: 1.5; }
+
+/* ===========================================================================
+   Transfer check — did the practised move come back?
+   =========================================================================== */
+
+.transfer-card { margin: 16px 0; }
+
+.transfer-head {
+  display: flex; flex-wrap: wrap; align-items: baseline;
+  justify-content: space-between; gap: 10px; margin-bottom: 8px;
+}
+
+.transfer-title {
+  margin: 0; font-size: 13px; font-weight: 700; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--muted);
+}
+
+/* The ladder reads as progress, so the colours climb with it. not_checkable
+   sits outside the ladder and stays neutral rather than looking like a score. */
+.transfer-status {
+  font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 99px; white-space: nowrap;
+}
+.transfer-status--not_yet_seen  { background: var(--rating-ineffective-bg); color: var(--rating-ineffective-fg); }
+.transfer-status--attempted     { background: var(--warm-bg); color: var(--warm-strong); }
+.transfer-status--consistent    { background: var(--rating-developing-bg); color: var(--rating-developing-fg); }
+.transfer-status--automatic     { background: var(--rating-effective-bg); color: var(--rating-effective-fg); }
+.transfer-status--not_checkable { background: var(--bg); color: var(--muted); border: 1px solid var(--border); }
+
+.transfer-move { margin: 0 0 12px; font-style: italic; }
+
+.transfer-counts { display: flex; flex-wrap: wrap; gap: 20px; margin: 12px 0; }
+.transfer-counts > div { font-size: 12px; color: var(--muted); }
+.transfer-n {
+  display: block; font-size: 24px; font-weight: 700; color: var(--fg);
+  line-height: 1.1; font-variant-numeric: tabular-nums;
+}
+
+.transfer-rationale { margin: 0 0 14px; font-size: 14px; line-height: 1.55; }
+
+.transfer-undetectable {
+  padding: 12px 14px; background: var(--bg); border-left: 3px solid var(--border-strong);
+  border-radius: 0 8px 8px 0; font-size: 14px; line-height: 1.55; margin-bottom: 14px;
+}
+
+.transfer-label {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase;
+  color: var(--muted); margin: 14px 0 6px;
+}
+
+.transfer-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+
+.transfer-item {
+  display: flex; gap: 10px; align-items: baseline; padding: 7px 10px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+  font-size: 13px; line-height: 1.5;
+}
+
+/* An unverified instance is shown rather than hidden — the coach should see
+   what was claimed — but visibly set apart, because it did not count. */
+.transfer-item--unverified { opacity: 0.62; border-style: dashed; }
+
+.transfer-ts {
+  font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 11px; font-weight: 600;
+  color: var(--accent-deep); background: var(--accent-tint); padding: 2px 6px;
+  border-radius: 4px; flex: none; font-variant-numeric: tabular-nums;
+}
+
+.transfer-missed { margin-top: 14px; }
+.transfer-missed > summary { cursor: pointer; font-size: 13px; font-weight: 600; }
+.transfer-missed .transfer-list { margin-top: 8px; }
+
+.transfer-confirm {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border);
+}
+.transfer-confirm label {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--muted);
+}
+.transfer-confirm select {
+  font-family: inherit; font-size: 14px; padding: 6px 8px;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: var(--card-bg); color: var(--fg);
+}

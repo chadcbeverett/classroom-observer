@@ -175,6 +175,90 @@
 </div>
 {% endif %}
 
+{# ---- Did the previously practised move come back? Coach only. ---- #}
+{% if prior_move and _viewer_role != 'teacher' %}
+{% set STATUS_LABEL = {'not_yet_seen':'Not seen yet','attempted':'Attempted','consistent':'Consistent','automatic':'Automatic','not_checkable':'Not checkable from audio'} %}
+<section class="card transfer-card" id="transfer">
+  <div class="transfer-head">
+    <h2 class="transfer-title">Did last time's move come back?</h2>
+    {% if transfer_check %}
+      <span class="transfer-status transfer-status--{{ transfer_check.effective_status }}">
+        {{ STATUS_LABEL.get(transfer_check.effective_status, transfer_check.effective_status) }}
+      </span>
+    {% endif %}
+  </div>
+
+  <p class="muted small transfer-move">Looking for: {{ prior_move.move_text }}</p>
+
+  {% if not transfer_check %}
+    <form method="post" action="/observations/{{ obs.id }}/transfer-check">
+      <button type="submit">Count it in this lesson</button>
+      <span class="muted small">Counts uses and missed chances, then checks each one against the transcript.</span>
+    </form>
+  {% else %}
+    {% if not transfer_check.detectable %}
+      <div class="transfer-undetectable">
+        <strong>Not countable from audio.</strong>
+        {{ transfer_check.not_detectable_reason }}
+        You'll need to judge this one yourself.
+      </div>
+    {% else %}
+      <div class="transfer-counts">
+        <div><span class="transfer-n">{{ transfer_check.uses_verified }}</span> used</div>
+        <div><span class="transfer-n">{{ transfer_check.opportunities_count }}</span> chances</div>
+        {% if transfer_check.median_latency_sec %}
+          <div><span class="transfer-n">{{ transfer_check.median_latency_sec|round|int }}s</span> typical wait</div>
+        {% endif %}
+      </div>
+      <p class="transfer-rationale">{{ transfer_check.ai_rationale }}</p>
+
+      {% if transfer_check.uses %}
+      <div class="transfer-label">Where they did it</div>
+      <ul class="transfer-list">
+        {% for u in transfer_check.uses %}
+        <li class="transfer-item {{ '' if u.verified else 'transfer-item--unverified' }}">
+          <span class="transfer-ts">{{ u.timestamp }}</span>
+          <span>{{ u.quote }}
+            {%- if not u.verified %} <em class="muted small">— not found in the transcript, not counted</em>{% endif %}
+          </span>
+        </li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+
+      {% if transfer_check.missed %}
+      <details class="transfer-missed">
+        <summary>{{ transfer_check.missed|length }} chance{{ 's' if transfer_check.missed|length != 1 }} they didn't take</summary>
+        <ul class="transfer-list">
+          {% for m in transfer_check.missed %}
+          <li class="transfer-item">
+            <span class="transfer-ts">{{ m.timestamp }}</span>
+            <span>{{ m.what_happened }}</span>
+          </li>
+          {% endfor %}
+        </ul>
+      </details>
+      {% endif %}
+    {% endif %}
+
+    <form method="post" action="/transfer-checks/{{ transfer_check.id }}/confirm" class="transfer-confirm">
+      <label for="tc-status">Your call</label>
+      <select id="tc-status" name="status">
+        {% for k, v in STATUS_LABEL.items() %}
+          <option value="{{ k }}" {{ 'selected' if transfer_check.effective_status == k }}>{{ v }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit">{{ 'Update' if transfer_check.confirmed_at else 'Confirm' }}</button>
+      {% if transfer_check.confirmed_at %}
+        <span class="muted small">You confirmed this {{ transfer_check.confirmed_at | warmdate }}.</span>
+      {% else %}
+        <span class="muted small">The count is a proposal until you say so.</span>
+      {% endif %}
+    </form>
+  {% endif %}
+</section>
+{% endif %}
+
 {# ---- Practice plan: rehearsal attached to the published move. Coach only. ---- #}
 {% if coach_move and _viewer_role != 'teacher' %}
 <section class="card practice-card" id="practice">
