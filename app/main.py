@@ -1238,11 +1238,24 @@ def dashboard_home(request: Request) -> HTMLResponse:
             except Exception:
                 row["days_until"] = 0
 
+        # Moves named but never rehearsed. The gap between naming a move and
+        # practising it was previously invisible: nothing said "this was named
+        # eleven school days ago and nobody has run it." Counted in school
+        # days, so a move named Friday and rehearsed Monday is one day late,
+        # not three.
+        attention_practice = []
+        _dash_uid = _viewer_uid(_viewer_home)
+        if _viewer_home.get("role") == "coach" and _dash_uid:
+            from pipeline.cycle_timing import nudges_for_coach
+            attention_practice = [n for n in nudges_for_coach(conn, _dash_uid)
+                                  if n["stage"] == "practice"]
+
         attention_total = (
             len(attention_debriefs) + len(attention_actions)
             + len(attention_cycles) + len(attention_lps)
             + len(attention_responses) + len(attention_obs_due)
             + len(attention_no_profile) + len(attention_proposed_goals)
+            + len(attention_practice)
         )
 
         # Recent teachers for the tile row (top 6 by most recent activity),
@@ -1277,6 +1290,7 @@ def dashboard_home(request: Request) -> HTMLResponse:
         "request": request,
         "greeting": _greeting,
         "attention_debriefs": attention_debriefs,
+        "attention_practice": attention_practice,
         "attention_actions": attention_actions,
         "attention_cycles": attention_cycles,
         "attention_lps": attention_lps,

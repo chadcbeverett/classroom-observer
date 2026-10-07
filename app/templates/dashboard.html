@@ -30,7 +30,7 @@
         <div>Nothing waiting. You're caught up.</div>
       </div>
     {% else %}
-    {% set tier_now = attention_responses|length + attention_debriefs|length + attention_actions|length %}
+    {% set tier_now = attention_responses|length + attention_debriefs|length + attention_actions|length + attention_practice|length %}
     {% set tier_later = attention_total - tier_now %}
     {% if tier_now and tier_later %}<div class="attention-tier-head">Waiting on you</div>{% endif %}
     <ul class="attention-list">
@@ -47,6 +47,22 @@
               </div>
             </div>
             <div class="attention-meta">{{ r.days }}d</div>
+          </a>
+        </li>
+      {% endfor %}
+
+      {% for r in attention_practice %}
+        <li>
+          <a class="attention-item" href="/observations/{{ r.observation_id }}#practice">
+            <svg class="icon"><use href="#icon-action"/></svg>
+            <div class="attention-body">
+              <div class="title">You named a move for {{ r.teacher_name }} but haven't practised it yet</div>
+              <div class="sub">
+                {{ r.school_days }} school day{{ 's' if r.school_days != 1 }} since you named it —
+                rehearsing it once, before {{ r.teacher_name }} teaches again, is what makes it stick
+              </div>
+            </div>
+            <div class="attention-meta">{{ r.school_days }}d</div>
           </a>
         </li>
       {% endfor %}
