@@ -3451,3 +3451,203 @@ nav a { padding-left: 8px; padding-right: 8px; }
   .ev-item { flex-direction: column; gap: 4px; }
   .ev-ts { align-self: flex-start; }
 }
+
+/* ===========================================================================
+   Practice plan — rehearsal attached to a published move
+   ===========================================================================
+   Sits between the move and the rubric read, because that is the order the
+   coaching conversation runs: here is the move, here is how you will rehearse
+   it, here is what the lesson showed.
+   ========================================================================= */
+
+.practice-card { margin: 16px 0; }
+
+.practice-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.practice-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.practice-chip {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 9px;
+  border-radius: 99px;
+  white-space: nowrap;
+}
+
+.practice-chip--done { background: var(--cool-bg); color: var(--cool); }
+.practice-chip--todo { background: var(--warm-bg); color: var(--warm-strong); }
+
+.practice-draft-btn { margin-right: 10px; }
+
+.practice-form { display: grid; gap: 4px; }
+
+.practice-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-top: 12px;
+}
+
+.practice-input {
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  background: var(--card-bg);
+  color: var(--fg);
+  resize: vertical;
+}
+
+/* Rounds are numbered because the escalation is the point: round three only
+   means something as the thing that comes after round two. */
+.practice-rounds { margin: 6px 0 0; padding-left: 20px; display: grid; gap: 8px; }
+
+.practice-round {
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.practice-round__do { font-size: 14px; line-height: 1.5; }
+
+.practice-round__curve,
+.practice-round__success {
+  font-size: 12.5px;
+  line-height: 1.45;
+  margin-top: 5px;
+  color: var(--ink, var(--fg));
+}
+
+.practice-round__curve span,
+.practice-round__success span {
+  display: inline-block;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 3px;
+  margin-right: 5px;
+  vertical-align: 1px;
+}
+
+.practice-round__curve span { background: var(--warm-bg); color: var(--warm-strong); }
+.practice-round__curve--clean span { background: var(--accent-tint); color: var(--accent-deep); }
+.practice-round__success span { background: var(--cool-bg); color: var(--cool); }
+
+.practice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.practice-publish {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: var(--accent);
+}
+
+.practice-log { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 12px; }
+.practice-log > summary { cursor: pointer; font-weight: 600; font-size: 13px; }
+
+.practice-log-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px 14px;
+  margin-top: 12px;
+}
+
+.practice-log-form label {
+  display: grid;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  min-width: 0;
+}
+
+.practice-log-form select,
+.practice-log-form input,
+.practice-log-form textarea {
+  font-family: inherit;
+  font-size: 14px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card-bg);
+  color: var(--fg);
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+}
+
+.practice-log-form input[type="number"] { width: 5.5rem; }
+.practice-log-notes { flex: 1 1 16rem; }
+.practice-log-notes textarea { width: 100%; resize: vertical; }
+
+.practice-history {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.practice-history li {
+  padding: 8px 11px;
+  background: var(--bg);
+  border-left: 3px solid var(--cool);
+  border-radius: 0 6px 6px 0;
+}
+
+@media (max-width: 560px) {
+  .practice-log-form { flex-direction: column; align-items: stretch; }
+  .practice-log-form input[type="number"] { width: 100%; }
+}
+
+/* Teacher's view of the practice plan. Deliberately thin: the objective and
+   what to expect, no model script, no success criteria, no coach notes. The
+   plan is something the coach runs with them, not homework to read. */
+.tv-practice {
+  margin-top: 14px;
+  padding: 12px 14px;
+  background: var(--accent-tint);
+  border-radius: 8px;
+}
+
+.tv-practice__label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--accent-deep);
+  margin-bottom: 5px;
+}
+
+.tv-practice__objective { margin: 0 0 6px; font-size: 14px; line-height: 1.5; }

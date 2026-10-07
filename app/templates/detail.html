@@ -175,6 +175,115 @@
 </div>
 {% endif %}
 
+{# ---- Practice plan: rehearsal attached to the published move. Coach only. ---- #}
+{% if coach_move and _viewer_role != 'teacher' %}
+<section class="card practice-card" id="practice">
+  <div class="practice-head">
+    <h2 class="practice-title">Practice before the next lesson</h2>
+    {% if practice_sessions %}
+      <span class="practice-chip practice-chip--done">
+        rehearsed {{ practice_sessions|length }}&times;
+      </span>
+    {% elif practice_plan %}
+      <span class="practice-chip practice-chip--todo">not run yet</span>
+    {% endif %}
+  </div>
+
+  {% if not practice_plan %}
+    <p class="muted">
+      {{ obs.teacher.split()[0] }} has the move. Rehearsing it with you once,
+      before they teach again, is what turns it into something they can do
+      under pressure.
+    </p>
+    <form method="post" action="/coach-moves/{{ coach_move.id }}/practice-plan/draft">
+      <button type="submit" class="practice-draft-btn">Draft a practice plan</button>
+      <span class="muted small">You edit it before anything is shared.</span>
+    </form>
+  {% else %}
+    <form method="post" action="/practice-plans/{{ practice_plan.id }}/save" class="practice-form">
+      <label class="practice-label" for="pp-obj">What {{ obs.teacher.split()[0] }} will be able to do</label>
+      <textarea id="pp-obj" name="objective" rows="2" class="practice-input">{{ practice_plan.objective }}</textarea>
+
+      <label class="practice-label" for="pp-model">How you'll model it</label>
+      <textarea id="pp-model" name="model_script" rows="5" class="practice-input">{{ practice_plan.model_script }}</textarea>
+
+      <div class="practice-label">Rounds</div>
+      <ol class="practice-rounds">
+        {% for r in practice_plan.rounds %}
+        <li class="practice-round">
+          <div class="practice-round__do">{{ r.scenario }}</div>
+          {% if r.curveball %}
+            <div class="practice-round__curve"><span>curveball</span> {{ r.curveball }}</div>
+          {% else %}
+            <div class="practice-round__curve practice-round__curve--clean"><span>clean run</span></div>
+          {% endif %}
+          <div class="practice-round__success"><span>done when</span> {{ r.success_criterion }}</div>
+        </li>
+        {% endfor %}
+      </ol>
+      <input type="hidden" name="rounds_json" value="{{ practice_plan.rounds_json }}">
+
+      <label class="practice-label" for="pp-doover">Run it again when</label>
+      <textarea id="pp-doover" name="do_over_rule" rows="2" class="practice-input">{{ practice_plan.do_over_rule }}</textarea>
+
+      <div class="practice-actions">
+        <button type="submit">Save</button>
+        {% if not practice_plan.published_at %}
+          <button type="submit" name="publish" value="1" class="practice-publish">
+            Save &amp; share with {{ obs.teacher.split()[0] }}
+          </button>
+          <span class="muted small">They see the plan, never the AI's draft of it.</span>
+        {% else %}
+          <span class="muted small">Shared {{ practice_plan.published_at | warmdatetime }}.</span>
+        {% endif %}
+      </div>
+    </form>
+
+    <details class="practice-log" {{ 'open' if not practice_sessions }}>
+      <summary>Log a rehearsal</summary>
+      <form method="post" action="/practice-plans/{{ practice_plan.id }}/log" class="practice-log-form">
+        <label>How
+          <select name="mode">
+            <option value="in_person">In person</option>
+            <option value="video_call">Video call</option>
+            <option value="async_video">They sent a video</option>
+          </select>
+        </label>
+        <label>Rounds done <input type="number" name="rounds_completed" min="0" max="20" value="{{ practice_plan.rounds|length }}"></label>
+        <label>Do-overs <input type="number" name="do_overs_count" min="0" max="50" value="0"></label>
+        <label>Ready to use it tomorrow?
+          <select name="coach_ready_rating">
+            <option value="">—</option>
+            <option value="1">Not yet</option>
+            <option value="2">Getting there</option>
+            <option value="3">Yes</option>
+          </select>
+        </label>
+        <label class="practice-log-notes">Your notes (only you see these)
+          <textarea name="coach_notes" rows="2"></textarea>
+        </label>
+        <button type="submit">Log it</button>
+      </form>
+    </details>
+
+    {% if practice_sessions %}
+    <ul class="practice-history">
+      {% for ps in practice_sessions %}
+      <li>
+        <strong>{{ ps.held_at | warmdate }}</strong>
+        · {{ {'in_person':'in person','video_call':'video call','async_video':'sent a video'}[ps.mode] }}
+        · {{ ps.rounds_completed }} round{{ 's' if ps.rounds_completed != 1 }}
+        {% if ps.do_overs_count %} · {{ ps.do_overs_count }} do-over{{ 's' if ps.do_overs_count != 1 }}{% endif %}
+        {% if ps.coach_ready_rating %} · {{ {1:'not yet',2:'getting there',3:'ready'}[ps.coach_ready_rating] }}{% endif %}
+        {% if ps.coach_notes %}<div class="muted small">{{ ps.coach_notes }}</div>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  {% endif %}
+</section>
+{% endif %}
+
 {# ---- Domain rating strip. For teacher viewers, hide behind a disclosure. ---- #}
 {% if ratings %}
 {% if _viewer_role == 'teacher' %}

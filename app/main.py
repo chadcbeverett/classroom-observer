@@ -102,6 +102,8 @@ from pipeline.db import (
     upsert_hlm_response, get_hlm_response, acknowledge_hlm_response,
     list_unacknowledged_hlm_responses, set_goal_releasing,
     publish_coach_move, edit_coach_move, get_current_coach_move,
+    create_practice_plan, publish_practice_plan, get_practice_plan_for_move,
+    log_practice_session, list_practice_sessions,
     list_coach_move_history, most_recent_published_move_for_teacher,
     carry_forward_goal, set_action_goal, list_actions_for_goal,
     add_practice_log_entry, list_practice_log_for_teacher,
@@ -1651,6 +1653,10 @@ def observation_detail(request: Request, observation_id: str) -> HTMLResponse:
     try:
         _hlm_resp = get_hlm_response(conn2, observation_id)
         _coach_move = get_current_coach_move(conn2, observation_id)
+        # Rehearsal attached to the current move, plus any sessions already run.
+        _practice_plan = get_practice_plan_for_move(conn2, _coach_move["id"]) if _coach_move else None
+        _practice_sessions = (list_practice_sessions(conn2, _practice_plan["id"])
+                              if _practice_plan else [])
         _coach_move_history = list_coach_move_history(conn2, observation_id)
     finally:
         conn2.close()
@@ -1725,6 +1731,8 @@ def observation_detail(request: Request, observation_id: str) -> HTMLResponse:
             # archive control when the observation is already archived.
             "deleted_at": _fmt_ts(obs["deleted_at"]) if obs["deleted_at"] else None,
         },
+        "practice_plan": _practice_plan,
+        "practice_sessions": _practice_sessions,
         "ratings": ratings,
         "rubric": rubric,
         "domains": rubric.domains,
@@ -2754,8 +2762,16 @@ def teacher_facing_view(request: Request, teacher_id: str) -> HTMLResponse:
         current_move = None          # move for the latest observation
         continuity_move = None       # fallback: most-recent published move overall
         awaiting_coach = False       # true when latest obs has no move yet
+        _tv_plan = None
         if latest_obs_row:
             current_move = get_current_coach_move(conn, latest_obs_row["id"])
+            # Only a plan the coach has shared. A draft is the coach's working
+            # material — model script, success criteria, private notes — and
+            # must never surface on a teacher page.
+            if current_move:
+                _tv_plan = get_practice_plan_for_move(conn, current_move["id"])
+                if _tv_plan and not _tv_plan.get("published_at"):
+                    _tv_plan = None
             if not current_move:
                 awaiting_coach = True
                 continuity_move = most_recent_published_move_for_teacher(conn, teacher_id)
@@ -2843,6 +2859,7 @@ def teacher_facing_view(request: Request, teacher_id: str) -> HTMLResponse:
         "active_goals": active_goals,
         "latest_obs": dict(latest_obs_row) if latest_obs_row else None,
         "current_move": current_move,
+        "practice_plan": _tv_plan,
         "continuity_move": continuity_move,
         "awaiting_coach": awaiting_coach,
         "existing_hlm_response": existing_hlm_response,
@@ -4825,6 +4842,155 @@ def obs_publish_coach_move(
     finally:
         conn.close()
     return RedirectResponse(url=f"/observations/{observation_id}", status_code=303)
+
+
+@app.post("/coach-moves/{move_id}/practice-plan/draft")
+def coach_move_draft_practice_plan(request: Request, move_id: str) -> RedirectResponse:
+    """Draft a rehearsal plan for this move. Coach edits before anyone sees it."""
+    if request.state.viewer["role"] != "coach":
+        raise HTTPException(403, "Only the coach builds practice plans")
+    conn = db_connect(DB_PATH)
+    try:
+        move = conn.execute(
+            """SELECT m.*, o.teacher_id, o.org_id
+               FROM published_coach_moves m JOIN observations o ON o.id = m.observation_id
+               WHERE m.id = ?""",
+            (move_id,),
+        ).fetchone()
+        if not move:
+            raise HTTPException(404, "Move not found")
+        viewer = _guard_obs_write(request, move["observation_id"], "Practice plan draft")
+
+        # Evidence that motivated the move, so the rehearsal resembles this
+        # teacher's room rather than a generic classroom.
+        moments = []
+        rv = conn.execute(
+            """SELECT domain_assessments FROM report_versions
+               WHERE observation_id = ? ORDER BY version_number DESC LIMIT 1""",
+            (move["observation_id"],),
+        ).fetchone()
+        if rv and rv["domain_assessments"]:
+            try:
+                for da in json.loads(rv["domain_assessments"])[:2]:
+                    for ds in (da.get("descriptor_scores") or [])[:1]:
+                        for ev in (ds.get("evidence") or [])[:2]:
+                            q = ev.get("quote_or_description")
+                            if q:
+                                moments.append(q[:160])
+            except (ValueError, TypeError, KeyError):
+                moments = []
+
+        from pipeline.practice import draft_practice_plan
+        step = move["gbf_step_id"] or None
+        try:
+            plan = draft_practice_plan(
+                move_text=move["move_text"],
+                gbf_step_id=step,
+                evidence_moments=moments,
+            )
+        except Exception as e:
+            raise HTTPException(502, f"Could not draft a practice plan: {e}")
+
+        create_practice_plan(
+            conn,
+            coaching_move_id=move_id,
+            observation_id=move["observation_id"],
+            teacher_id=move["teacher_id"],
+            org_id=move["org_id"],
+            plan=plan,
+            gbf_step_id=step,
+            gbf_phase_id=(GBF_STEPS_BY_ID[step].phase_id if step in GBF_STEPS_BY_ID else None),
+            derived_from_ai=True,
+            created_by_user_id=_viewer_uid(viewer),
+        )
+    finally:
+        conn.close()
+    return RedirectResponse(url=f"/observations/{move['observation_id']}#practice", status_code=303)
+
+
+@app.post("/practice-plans/{plan_id}/save")
+def practice_plan_save(
+    request: Request,
+    plan_id: str,
+    objective: str = Form(...),
+    model_script: str = Form(...),
+    do_over_rule: str = Form(...),
+    rounds_json: str = Form("[]"),
+    publish: Optional[str] = Form(None),
+) -> RedirectResponse:
+    """Coach saves their edits, optionally sharing the plan with the teacher."""
+    if request.state.viewer["role"] != "coach":
+        raise HTTPException(403, "Only the coach edits practice plans")
+    conn = db_connect(DB_PATH)
+    try:
+        row = conn.execute("SELECT * FROM practice_plans WHERE id = ?", (plan_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Practice plan not found")
+        _guard_obs_write(request, row["observation_id"], "Practice plan edit")
+        try:
+            rounds = json.loads(rounds_json or "[]")
+            if not isinstance(rounds, list):
+                raise ValueError
+        except ValueError:
+            raise HTTPException(400, "Rounds could not be read.")
+        # An edit is an edit, not a new plan: keep the row so the practice
+        # sessions already logged against it stay attached.
+        conn.execute(
+            """UPDATE practice_plans
+                  SET objective = ?, model_script = ?, do_over_rule = ?, rounds_json = ?
+                WHERE id = ?""",
+            (objective.strip(), model_script.strip(), do_over_rule.strip(),
+             json.dumps(rounds), plan_id),
+        )
+        conn.commit()
+        if publish:
+            publish_practice_plan(conn, plan_id)
+        obs_id = row["observation_id"]
+    finally:
+        conn.close()
+    return RedirectResponse(url=f"/observations/{obs_id}#practice", status_code=303)
+
+
+@app.post("/practice-plans/{plan_id}/log")
+def practice_plan_log(
+    request: Request,
+    plan_id: str,
+    held_at: Optional[str] = Form(None),
+    mode: str = Form("in_person"),
+    rounds_completed: int = Form(0),
+    do_overs_count: int = Form(0),
+    coach_ready_rating: Optional[int] = Form(None),
+    coach_notes: Optional[str] = Form(None),
+) -> RedirectResponse:
+    """Record that the rehearsal actually happened."""
+    if request.state.viewer["role"] != "coach":
+        raise HTTPException(403, "Only the coach logs practice")
+    conn = db_connect(DB_PATH)
+    try:
+        row = conn.execute("SELECT * FROM practice_plans WHERE id = ?", (plan_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Practice plan not found")
+        viewer = _guard_obs_write(request, row["observation_id"], "Practice log")
+        try:
+            log_practice_session(
+                conn,
+                practice_plan_id=plan_id,
+                teacher_id=row["teacher_id"],
+                org_id=row["org_id"],
+                held_at=(held_at or None),
+                mode=mode,
+                rounds_completed=rounds_completed,
+                do_overs_count=do_overs_count,
+                coach_ready_rating=coach_ready_rating,
+                coach_notes=coach_notes,
+                logged_by_user_id=_viewer_uid(viewer),
+            )
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        obs_id = row["observation_id"]
+    finally:
+        conn.close()
+    return RedirectResponse(url=f"/observations/{obs_id}#practice", status_code=303)
 
 
 @app.post("/coach-moves/{move_id}/edit")

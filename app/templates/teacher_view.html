@@ -261,6 +261,19 @@
   <p class="obs-spotlight-body">{{ current_move.move_text }}</p>
   <div class="muted small">Sent {{ current_move.published_at | warmdatetime }}{% if current_move.edited_at %} · changed {{ current_move.edited_at | warmdatetime }}{% endif %}</div>
 
+  {% if practice_plan %}
+  <div class="tv-practice">
+    <div class="tv-practice__label">What you and your coach will practice</div>
+    <p class="tv-practice__objective">{{ practice_plan.objective }}</p>
+    {% if practice_plan.rounds %}
+      <p class="muted small">
+        {{ practice_plan.rounds|length }} short rounds, starting simple and getting
+        harder. Your coach will run it with you — you don't need to prepare.
+      </p>
+    {% endif %}
+  </div>
+  {% endif %}
+
   {% if response_is_stale_for_teacher %}
     <div class="stale-response-badge" style="margin-top: 12px;">
       <svg class="icon icon-sm"><use href="#icon-alert"/></svg>
