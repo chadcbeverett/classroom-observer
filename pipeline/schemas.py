@@ -312,3 +312,54 @@ def validate_against_rubric(report: ObservationReport, rubric: Rubric) -> None:
         raise ValueError(
             "Report failed rubric-specific validation:\n  " + "\n  ".join(errors)
         )
+
+
+# ---------------------------------------------------------------------------
+# Practice plans — rehearsal attached to a published coaching move
+# ---------------------------------------------------------------------------
+
+class PracticeRound(BaseModel):
+    """One rehearsal round. Rounds escalate from clean repetition toward
+    game-like conditions, which is the drill-to-scrimmage progression."""
+
+    scenario: str = Field(
+        description="What the teacher does in this round, in one or two "
+        "sentences. Concrete enough to start without further explanation."
+    )
+    curveball: Optional[str] = Field(
+        default=None,
+        description="What the coach does to make this round harder than the "
+        "last — a student response that complicates the move. Leave empty for "
+        "the first, cleanest round.",
+    )
+    success_criterion: str = Field(
+        description="What the coach watches for to call this round done. "
+        "Observable in the moment, not a judgment formed afterwards."
+    )
+
+
+class PracticePlan(BaseModel):
+    """A rehearsal plan for one published coaching move.
+
+    Drafted by the model, owned and run by the coach. The teacher rehearses the
+    move with their coach before teaching again, rather than hearing the move
+    once and being left to apply it unaided.
+    """
+
+    objective: str = Field(
+        description="One line naming what the teacher will be able to do by the "
+        "end of practice. States the behaviour, not the rationale."
+    )
+    model_script: str = Field(
+        description="What the coach says and does to demonstrate the move, "
+        "30-60 seconds of it, written so the coach can perform it directly. "
+        "Includes the actual words where words are the point."
+    )
+    rounds: List[PracticeRound] = Field(
+        description="Three or four rounds, escalating. The first is clean "
+        "repetition; later ones add difficulty."
+    )
+    do_over_rule: str = Field(
+        description="One line telling the coach when to stop and run the round "
+        "again rather than discuss it — the trigger for a repeat, not advice."
+    )

@@ -136,6 +136,74 @@ def _apply_additive_migrations(conn: sqlite3.Connection) -> None:
         if column not in cols:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
+    # Practice plans: rehearsal attached to a published coaching move.
+    #
+    # The loop until now was observe, score, publish one move, teacher responds,
+    # coach marks implemented — feedback on performance with no place for the
+    # teacher to do the move correctly, repeatedly, before the next live lesson.
+    # A plan is drafted by the model and owned by the coach, who runs it with the
+    # teacher. `derived_from_ai` mirrors published_coach_moves so oversight can
+    # see whether coaches are rubber-stamping drafts here too.
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS practice_plans (
+            id                   TEXT PRIMARY KEY,
+            coaching_move_id     TEXT NOT NULL REFERENCES published_coach_moves(id),
+            observation_id       TEXT NOT NULL REFERENCES observations(id),
+            teacher_id           TEXT NOT NULL REFERENCES teachers(id),
+            org_id               TEXT NOT NULL REFERENCES organizations(id),
+            -- Snapshot of the phase at drafting time. The phase is derived from
+            -- the calendar, so it moves on its own; a plan must stay readable
+            -- against the phase it was actually built for.
+            gbf_step_id          TEXT,
+            gbf_phase_id         TEXT,
+            objective            TEXT NOT NULL,
+            model_script         TEXT NOT NULL,
+            rounds_json          TEXT NOT NULL,
+            do_over_rule         TEXT NOT NULL,
+            derived_from_ai      INTEGER NOT NULL DEFAULT 0,
+            created_by_user_id   TEXT REFERENCES users(id),
+            created_at           TEXT NOT NULL,
+            published_at         TEXT,
+            superseded_at        TEXT
+        )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_practice_plans_move ON practice_plans(coaching_move_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_practice_plans_teacher ON practice_plans(teacher_id, created_at DESC)"
+    )
+
+    # One row per time the coach and teacher actually rehearsed. Separate from
+    # the plan because a plan may be run more than once, and because the
+    # interval from publishing a move to rehearsing it is the number the
+    # feedback-loop clock needs.
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS practice_sessions (
+            id                   TEXT PRIMARY KEY,
+            practice_plan_id     TEXT NOT NULL REFERENCES practice_plans(id),
+            teacher_id           TEXT NOT NULL REFERENCES teachers(id),
+            org_id               TEXT NOT NULL REFERENCES organizations(id),
+            held_at              TEXT NOT NULL,
+            mode                 TEXT NOT NULL DEFAULT 'in_person'
+                CHECK (mode IN ('in_person', 'video_call', 'async_video')),
+            rounds_completed     INTEGER NOT NULL DEFAULT 0,
+            do_overs_count       INTEGER NOT NULL DEFAULT 0,
+            -- 1 not yet, 2 getting there, 3 ready to use it tomorrow. Coach's
+            -- read of the teacher at the end of rehearsal, not a rubric rating.
+            coach_ready_rating   INTEGER
+                CHECK (coach_ready_rating IS NULL OR coach_ready_rating BETWEEN 1 AND 3),
+            -- Coach-private, same footing as coach_private_notes. Never shown
+            -- to the teacher.
+            coach_notes          TEXT,
+            logged_by_user_id    TEXT REFERENCES users(id),
+            created_at           TEXT NOT NULL
+        )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_practice_sessions_plan ON practice_sessions(practice_plan_id, held_at DESC)"
+    )
+
     # New table: the coach's *published* move for the teacher.
     # Distinct from the AI's raw suggestion — coach reviews AI, edits, and
     # publishes. Teacher never sees raw AI output; only the coach's version.
@@ -2949,3 +3017,155 @@ def load_rubric_spec(conn: sqlite3.Connection, rubric_id: str):
     if not row or not row["spec_json"]:
         return None
     return RubricSpec.model_validate_json(row["spec_json"])
+
+
+# ---------------------------------------------------------------------------
+# Practice plans and sessions
+# ---------------------------------------------------------------------------
+
+def create_practice_plan(
+    conn: sqlite3.Connection,
+    *,
+    coaching_move_id: str,
+    observation_id: str,
+    teacher_id: str,
+    org_id: str,
+    plan,
+    gbf_step_id: Optional[str] = None,
+    gbf_phase_id: Optional[str] = None,
+    derived_from_ai: bool = False,
+    created_by_user_id: Optional[str] = None,
+    publish: bool = False,
+) -> str:
+    """Store a practice plan against a published move.
+
+    `plan` is a PracticePlan. Creating a plan supersedes any earlier live plan
+    for the same move, so a coach who redrafts does not leave two competing
+    plans attached to one move with no way to tell which is current.
+    """
+    import json as _json
+
+    now = _now_iso()
+    conn.execute(
+        """UPDATE practice_plans SET superseded_at = ?
+           WHERE coaching_move_id = ? AND superseded_at IS NULL""",
+        (now, coaching_move_id),
+    )
+    plan_id = _new_id()
+    conn.execute(
+        """INSERT INTO practice_plans
+             (id, coaching_move_id, observation_id, teacher_id, org_id,
+              gbf_step_id, gbf_phase_id, objective, model_script, rounds_json,
+              do_over_rule, derived_from_ai, created_by_user_id, created_at, published_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (
+            plan_id, coaching_move_id, observation_id, teacher_id, org_id,
+            gbf_step_id, gbf_phase_id, plan.objective, plan.model_script,
+            _json.dumps([r.model_dump() for r in plan.rounds]), plan.do_over_rule,
+            1 if derived_from_ai else 0, created_by_user_id, now,
+            now if publish else None,
+        ),
+    )
+    conn.commit()
+    return plan_id
+
+
+def publish_practice_plan(conn: sqlite3.Connection, plan_id: str) -> None:
+    """Make a drafted plan visible to the teacher. Idempotent."""
+    conn.execute(
+        "UPDATE practice_plans SET published_at = ? WHERE id = ? AND published_at IS NULL",
+        (_now_iso(), plan_id),
+    )
+    conn.commit()
+
+
+def get_practice_plan_for_move(conn: sqlite3.Connection, coaching_move_id: str) -> Optional[dict]:
+    """The current (non-superseded) plan for a move, with rounds decoded."""
+    import json as _json
+
+    row = conn.execute(
+        """SELECT * FROM practice_plans
+           WHERE coaching_move_id = ? AND superseded_at IS NULL
+           ORDER BY created_at DESC LIMIT 1""",
+        (coaching_move_id,),
+    ).fetchone()
+    if not row:
+        return None
+    out = dict(row)
+    try:
+        out["rounds"] = _json.loads(out.get("rounds_json") or "[]")
+    except ValueError:
+        out["rounds"] = []
+    return out
+
+
+def log_practice_session(
+    conn: sqlite3.Connection,
+    *,
+    practice_plan_id: str,
+    teacher_id: str,
+    org_id: str,
+    held_at: Optional[str] = None,
+    mode: str = "in_person",
+    rounds_completed: int = 0,
+    do_overs_count: int = 0,
+    coach_ready_rating: Optional[int] = None,
+    coach_notes: Optional[str] = None,
+    logged_by_user_id: Optional[str] = None,
+) -> str:
+    """Record that the coach and teacher actually rehearsed.
+
+    Validates the enums here rather than trusting the form, because these feed
+    the feedback-loop intervals and a bad value would read as a missing session
+    rather than a rejected one.
+    """
+    if mode not in ("in_person", "video_call", "async_video"):
+        raise ValueError(f"Unknown practice mode {mode!r}")
+    if coach_ready_rating is not None and not 1 <= int(coach_ready_rating) <= 3:
+        raise ValueError("coach_ready_rating must be 1, 2 or 3")
+
+    now = _now_iso()
+    session_id = _new_id()
+    conn.execute(
+        """INSERT INTO practice_sessions
+             (id, practice_plan_id, teacher_id, org_id, held_at, mode,
+              rounds_completed, do_overs_count, coach_ready_rating,
+              coach_notes, logged_by_user_id, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (
+            session_id, practice_plan_id, teacher_id, org_id, held_at or now, mode,
+            max(0, int(rounds_completed)), max(0, int(do_overs_count)),
+            int(coach_ready_rating) if coach_ready_rating is not None else None,
+            (coach_notes or None), logged_by_user_id, now,
+        ),
+    )
+    conn.commit()
+    return session_id
+
+
+def list_practice_sessions(conn: sqlite3.Connection, practice_plan_id: str) -> List[dict]:
+    rows = conn.execute(
+        "SELECT * FROM practice_sessions WHERE practice_plan_id = ? ORDER BY held_at DESC",
+        (practice_plan_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def practice_state_for_teacher(conn: sqlite3.Connection, teacher_id: str) -> dict:
+    """Counts a coach needs at a glance: plans drafted, published, rehearsed."""
+    row = conn.execute(
+        """SELECT
+             COUNT(*)                                            AS plans,
+             SUM(CASE WHEN published_at IS NOT NULL THEN 1 ELSE 0 END) AS published
+           FROM practice_plans
+           WHERE teacher_id = ? AND superseded_at IS NULL""",
+        (teacher_id,),
+    ).fetchone()
+    held = conn.execute(
+        "SELECT COUNT(*) AS c FROM practice_sessions WHERE teacher_id = ?", (teacher_id,)
+    ).fetchone()
+    return {
+        "plans": row["plans"] or 0,
+        "published": row["published"] or 0,
+        "sessions_held": held["c"] or 0,
+    }
